@@ -1,29 +1,32 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import '../models/Player.dart';
+import '../models/player.dart';
 
 class ApiService {
   // --- TOGGLE THIS TO SWITCH BETWEEN REAL API AND MOCK DATA ---
-  static const bool useMockData = true;
+  static const bool useMockData = false;
   // -----------------------------------------------------------
 
   // Android Emulator uses 10.0.2.2 to access localhost
-  static const String _baseUrl = 'http://10.0.2.2:8080/api';
+  static const String _baseUrl = 'http://127.0.0.1:8080/api';
 
+  /// Search for players in the active pool
   Future<List<Player>> searchActivePlayers(String query) async {
-    // 1. Simulate API Latency if using mock data
+    // 1. Mock Data Path
     if (useMockData) {
       await Future.delayed(const Duration(milliseconds: 500));
       return _getMockResults(query);
     }
 
-    // 2. Real API Call
+    // 2. Real API Path
     try {
+      // UPDATED: Changed parameter from 'q' to 'query' to match Spring @RequestParam
       final response = await http.get(
-        Uri.parse('$_baseUrl/pool/search?q=$query'),
+        Uri.parse('$_baseUrl/pool/search?query=$query'),
       );
 
       if (response.statusCode == 200) {
+        print(response.body);
         final List<dynamic> body = jsonDecode(response.body);
         return body.map((json) => Player.fromJson(json)).toList();
       } else {
@@ -35,6 +38,50 @@ class ApiService {
     }
   }
 
+  /// Check In to the pool
+  Future<bool> checkIn(String username, String character) async {
+    if (useMockData) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      print('MOCK API: Checked in $username as $character');
+      return true;
+    }
+
+    try {
+      // Spring @RequestParam on POST usually expects query parameters
+      // or x-www-form-urlencoded. We'll use query params here.
+      final response = await http.post(
+        Uri.parse(
+            '$_baseUrl/pool/check-in?username=$username&character=$character'),
+      );
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Error checking in: $e');
+      return false;
+    }
+  }
+
+  /// Check Out of the pool
+  Future<bool> checkOut(String username, String character) async {
+    if (useMockData) {
+      await Future.delayed(const Duration(milliseconds: 300));
+      print('MOCK API: Checked out $username');
+      return true;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse(
+            '$_baseUrl/pool/check-out?username=$username&character=$character'),
+      );
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Error checking out: $e');
+      return false;
+    }
+  }
+
   // --- Mock Data Logic ---
 
   List<Player> _getMockResults(String query) {
@@ -42,14 +89,12 @@ class ApiService {
 
     final lowercaseQuery = query.toLowerCase();
 
-    // Filter the hardcoded list based on the search query
     return _mockPlayers.where((player) {
       return player.username.toLowerCase().contains(lowercaseQuery) ||
           player.character.toLowerCase().contains(lowercaseQuery);
     }).toList();
   }
 
-  // Hardcoded test data representing your "Active Pool"
   final List<Player> _mockPlayers = [
     Player(id: '1', username: 'MKLeo', character: 'Joker', rating: 2450),
     Player(id: '2', username: 'Sparg0', character: 'Cloud', rating: 2410),
@@ -65,7 +110,6 @@ class ApiService {
         character: 'Mr. Game & Watch',
         rating: 2200),
     Player(id: '10', username: 'Riddles', character: 'Kazuya', rating: 2310),
-    // A generic one for testing simple searches
     Player(id: '11', username: 'Smasher123', character: 'Samus', rating: 1500),
   ];
 }

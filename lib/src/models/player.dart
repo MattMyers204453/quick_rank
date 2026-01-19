@@ -1,8 +1,8 @@
 class Player {
   final String id;
   final String username;
-  final String character; // e.g., "Cloud", "Joker"
-  final int rating; // Current SmashRank Elo
+  final String character;
+  final int rating;
 
   Player({
     required this.id,
@@ -12,11 +12,17 @@ class Player {
   });
 
   factory Player.fromJson(Map<String, dynamic> json) {
+    print(json);
     return Player(
-      id: json['id'] as String,
-      username: json['username'] as String,
-      character: json['character'] as String,
-      rating: json['rating'] as int,
+      // API doesn't send ID yet, so we use username as the unique ID
+      id: json['username'] as String? ?? '',
+
+      // Handle the core fields
+      username: json['username'] as String? ?? 'Unknown',
+      character: json['character'] as String? ?? 'Random',
+
+      // API doesn't send rating yet, so default to 0 (or 1000)
+      rating: (json['rating'] as int?) ?? 0,
     );
   }
 }

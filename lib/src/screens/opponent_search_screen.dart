@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 
-import '../models/Player.dart';
+import '../models/player.dart';
 import '../services/api_service.dart';
 
 class OpponentSearchScreen extends StatefulWidget {
