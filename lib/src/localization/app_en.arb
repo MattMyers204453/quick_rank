@@ -1,0 +1,6 @@
+{
+  "appTitle": "quick_rank",
+  "@appTitle": {
+    "description": "The title of the application"
+  }
+}
