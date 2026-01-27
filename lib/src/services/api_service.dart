@@ -4,7 +4,7 @@ import '../models/player.dart';
 
 class ApiService {
   // --- TOGGLE THIS TO SWITCH BETWEEN REAL API AND MOCK DATA ---
-  static const bool useMockData = false;
+  static const bool useMockData = true;
   // -----------------------------------------------------------
 
   // Android Emulator uses 10.0.2.2 to access localhost

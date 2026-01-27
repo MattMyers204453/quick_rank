@@ -1,6 +1,6 @@
 // lib/main.dart
 import 'package:flutter/material.dart';
-import 'src/screens/opponent_search_screen.dart';
+import 'package:quick_rank/src/app.dart';
 
 void main() {
   runApp(const SmashRankApp());
@@ -19,7 +19,7 @@ class SmashRankApp extends StatelessWidget {
         brightness: Brightness.light,
         useMaterial3: true,
       ),
-      home: const OpponentSearchScreen(),
+      home: const MyApp(),
     );
   }
 }
