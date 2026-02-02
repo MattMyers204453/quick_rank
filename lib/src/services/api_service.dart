@@ -4,11 +4,15 @@ import '../models/player.dart';
 
 class ApiService {
   // --- TOGGLE THIS TO SWITCH BETWEEN REAL API AND MOCK DATA ---
-  static const bool useMockData = true;
+  static const bool useMockData = false;
   // -----------------------------------------------------------
 
   // Android Emulator uses 10.0.2.2 to access localhost
-  static const String _baseUrl = 'http://127.0.0.1:8080/api';
+  //static const String _baseUrl = 'http://10.0.2.2:8080/api';
+
+  // production URL
+  static const String _baseUrl =
+      'https://smashrank-api-production.up.railway.app/api';
 
   /// Search for players in the active pool
   Future<List<Player>> searchActivePlayers(String query) async {
@@ -20,7 +24,7 @@ class ApiService {
 
     // 2. Real API Path
     try {
-      // UPDATED: Changed parameter from 'q' to 'query' to match Spring @RequestParam
+      // Matches Spring: @GetMapping("/search") with @RequestParam String query
       final response = await http.get(
         Uri.parse('$_baseUrl/pool/search?query=$query'),
       );
@@ -39,19 +43,19 @@ class ApiService {
   }
 
   /// Check In to the pool
-  Future<bool> checkIn(String username, String character) async {
+  /// UPDATED: Added [elo] to match Spring @RequestParam int elo
+  Future<bool> checkIn(String username, String character, int elo) async {
     if (useMockData) {
       await Future.delayed(const Duration(milliseconds: 500));
-      print('MOCK API: Checked in $username as $character');
+      print('MOCK API: Checked in $username as $character with Elo $elo');
       return true;
     }
 
     try {
-      // Spring @RequestParam on POST usually expects query parameters
-      // or x-www-form-urlencoded. We'll use query params here.
+      // Matches Spring: @PostMapping("/check-in")
       final response = await http.post(
         Uri.parse(
-            '$_baseUrl/pool/check-in?username=$username&character=$character'),
+            '$_baseUrl/pool/check-in?username=$username&character=$character&elo=$elo'),
       );
 
       return response.statusCode == 200;
@@ -62,17 +66,19 @@ class ApiService {
   }
 
   /// Check Out of the pool
-  Future<bool> checkOut(String username, String character) async {
+  /// UPDATED: Added [elo] to match Spring @RequestParam int elo
+  Future<bool> checkOut(String username, String character, int elo) async {
     if (useMockData) {
       await Future.delayed(const Duration(milliseconds: 300));
-      print('MOCK API: Checked out $username');
+      print('MOCK API: Checked out $username ($elo)');
       return true;
     }
 
     try {
+      // Matches Spring: @PostMapping("/check-out")
       final response = await http.post(
         Uri.parse(
-            '$_baseUrl/pool/check-out?username=$username&character=$character'),
+            '$_baseUrl/pool/check-out?username=$username&character=$character&elo=$elo'),
       );
 
       return response.statusCode == 200;
