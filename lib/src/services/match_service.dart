@@ -7,7 +7,7 @@ import 'package:stomp_dart_client/stomp_dart_client.dart';
 class InvitePayload {
   final String inviteId;
   final String from;
-  final String status;
+  final String status; // PENDING or CANCELLED
 
   InvitePayload({
     required this.inviteId,
@@ -27,15 +27,22 @@ class InvitePayload {
 /// Payload received on /user/queue/match-updates
 class MatchUpdateEvent {
   final String? matchId;
-  final String status; // "STARTED", "ENDED", "DECLINED"
+  final String
+      status; // STARTED, AWAITING_CONFIRMATION, ENDED, DISPUTED, DECLINED
   final String player1;
   final String player2;
+  final String?
+      reporterUsername; // who submitted the first report (AWAITING_CONFIRMATION only)
+  final String?
+      claimedWinner; // who the reporter claims won (AWAITING_CONFIRMATION only)
 
   MatchUpdateEvent({
     required this.matchId,
     required this.status,
     required this.player1,
     required this.player2,
+    this.reporterUsername,
+    this.claimedWinner,
   });
 
   factory MatchUpdateEvent.fromJson(Map<String, dynamic> json) {
@@ -44,17 +51,13 @@ class MatchUpdateEvent {
       status: json['status'] as String,
       player1: json['player1'] as String,
       player2: json['player2'] as String,
+      reporterUsername: json['reporterUsername'] as String?,
+      claimedWinner: json['claimedWinner'] as String?,
     );
   }
 }
 
 /// Singleton service managing STOMP WebSocket + HTTP match endpoints.
-///
-/// Usage:
-///   final ms = MatchService();
-///   ms.connect('mew2king');
-///   ms.onInviteReceived.listen((invite) => showModal(...));
-///   ms.onMatchUpdate.listen((event) => navigate(...));
 class MatchService {
   // ---------------------------------------------------------------------------
   // Singleton
@@ -86,7 +89,7 @@ class MatchService {
   String? get myUsername => _myUsername;
   bool get isConnected => _isConnected;
 
-  /// The current active match ID (set on STARTED, cleared on ENDED).
+  /// The current active match ID (set on STARTED, cleared on ENDED/DISPUTED).
   String? activeMatchId;
 
   /// The opponent username in the current active match.
@@ -135,8 +138,6 @@ class MatchService {
           _isConnected = false;
           _connectionController.add(false);
         },
-        // If your Spring config has .withSockJS(), use StompConfig.sockJS()
-        // instead and change _wsBase to use https:// instead of wss://
       ),
     );
 
@@ -156,7 +157,8 @@ class MatchService {
         if (frame.body == null) return;
         final json = jsonDecode(frame.body!);
         final invite = InvitePayload.fromJson(json);
-        print('[WS] Invite received from ${invite.from}: ${invite.inviteId}');
+        print(
+            '[WS] Invite [${invite.status}] from ${invite.from}: ${invite.inviteId}');
         _inviteController.add(invite);
       },
     );
@@ -172,11 +174,12 @@ class MatchService {
 
         if (event.status == 'STARTED') {
           activeMatchId = event.matchId;
-          // Figure out who the opponent is
           activeOpponent =
               (event.player1 == _myUsername) ? event.player2 : event.player1;
         }
-        if (event.status == 'ENDED' || event.status == 'DECLINED') {
+        if (event.status == 'ENDED' ||
+            event.status == 'DECLINED' ||
+            event.status == 'DISPUTED') {
           activeMatchId = null;
           activeOpponent = null;
         }
@@ -228,6 +231,34 @@ class MatchService {
     }
   }
 
+  /// Cancel a pending invite (challenger withdraws).
+  Future<bool> cancelInvite(String inviteId, String opponentUsername) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$_httpBase/matches/cancel'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'inviteId': inviteId,
+          'challengerUsername': _myUsername,
+          'opponentUsername': opponentUsername,
+        }),
+      );
+
+      if (res.statusCode == 200) {
+        print('[HTTP] Invite cancelled.');
+        return true;
+      } else {
+        print('[HTTP] Cancel failed: ${res.body}');
+        _errorController.add(res.body);
+        return false;
+      }
+    } catch (e) {
+      print('[HTTP] Cancel error: $e');
+      _errorController.add('Network error: $e');
+      return false;
+    }
+  }
+
   /// Accept a pending invite.
   Future<bool> acceptInvite(String inviteId, String challengerUsername) async {
     try {
@@ -276,28 +307,58 @@ class MatchService {
     }
   }
 
-  /// Report match result. [winnerUsername] is whoever won.
-  Future<bool> reportResult(String matchId, String winnerUsername) async {
+  /// Report match result (first player submits their claim).
+  /// [claimedWinner] is the username of whoever this player says won.
+  Future<bool> reportResult(String matchId, String claimedWinner) async {
     try {
       final res = await http.post(
         Uri.parse('$_httpBase/matches/report'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'matchId': matchId,
-          'winnerUsername': winnerUsername,
+          'reporterUsername': _myUsername,
+          'claimedWinner': claimedWinner,
         }),
       );
 
       if (res.statusCode == 200) {
-        print('[HTTP] Result reported: $winnerUsername won.');
+        print('[HTTP] Result reported. Claimed winner: $claimedWinner');
         return true;
       } else {
         print('[HTTP] Report failed: ${res.body}');
-        _errorController.add('Report failed: ${res.body}');
+        _errorController.add(res.body);
         return false;
       }
     } catch (e) {
       print('[HTTP] Report error: $e');
+      _errorController.add('Network error: $e');
+      return false;
+    }
+  }
+
+  /// Confirm match result (second player responds with their independent view).
+  Future<bool> confirmResult(String matchId, String claimedWinner) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$_httpBase/matches/confirm'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'matchId': matchId,
+          'confirmerUsername': _myUsername,
+          'claimedWinner': claimedWinner,
+        }),
+      );
+
+      if (res.statusCode == 200) {
+        print('[HTTP] Result confirmed. Claimed winner: $claimedWinner');
+        return true;
+      } else {
+        print('[HTTP] Confirm failed: ${res.body}');
+        _errorController.add(res.body);
+        return false;
+      }
+    } catch (e) {
+      print('[HTTP] Confirm error: $e');
       _errorController.add('Network error: $e');
       return false;
     }
