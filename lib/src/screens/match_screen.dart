@@ -6,8 +6,7 @@ enum MatchPhase {
   playing, // Both players see "I Won" / "I Lost"
   waitingForConfirm, // Reporter's view: waiting for opponent + countdown
   confirming, // Opponent's view: see claim + "I Won" / "I Lost" + countdown
-  ended, // Match finalized (players agreed)
-  disputed, // Match finalized (players disagreed)
+  rematchOffer, // Both players see result + "Rematch" / "Leave" + countdown
 }
 
 class MatchScreen extends StatefulWidget {
@@ -32,54 +31,33 @@ class _MatchScreenState extends State<MatchScreen> {
   MatchPhase _phase = MatchPhase.playing;
   bool _isSubmitting = false;
 
+  // --- Current match tracking (may change on rematch) ---
+  late String _currentMatchId;
+  late String _currentOpponent;
+
   // --- Confirmation state (populated on AWAITING_CONFIRMATION) ---
   String? _reporterUsername;
   String? _claimedWinner;
 
-  // --- Countdown ---
+  // --- Rematch state (populated on REMATCH_OFFERED) ---
+  String? _matchResult; // "COMPLETED" or "DISPUTED"
+  String? _matchWinner; // winner username or null if disputed
+  bool _rematchWaiting =
+      false; // true if this player accepted, waiting for opponent
+
+  // --- Countdown (shared between confirmation and rematch phases) ---
   static const int _confirmTimeoutSeconds = 20;
+  static const int _rematchTimeoutSeconds = 15;
   int _secondsRemaining = _confirmTimeoutSeconds;
   Timer? _countdownTimer;
 
   @override
   void initState() {
     super.initState();
+    _currentMatchId = widget.matchId;
+    _currentOpponent = widget.opponentUsername;
 
-    _matchSub = _matchService.onMatchUpdate.listen((event) {
-      if (event.matchId != widget.matchId) return;
-      if (!mounted) return;
-
-      switch (event.status) {
-        case 'AWAITING_CONFIRMATION':
-          _reporterUsername = event.reporterUsername;
-          _claimedWinner = event.claimedWinner;
-
-          final bool iAmReporter =
-              event.reporterUsername == _matchService.myUsername;
-
-          setState(() {
-            _phase = iAmReporter
-                ? MatchPhase.waitingForConfirm
-                : MatchPhase.confirming;
-            _isSubmitting = false;
-          });
-
-          _startCountdown();
-          break;
-
-        case 'ENDED':
-          _countdownTimer?.cancel();
-          setState(() => _phase = MatchPhase.ended);
-          _popAfterDelay();
-          break;
-
-        case 'DISPUTED':
-          _countdownTimer?.cancel();
-          setState(() => _phase = MatchPhase.disputed);
-          _popAfterDelay();
-          break;
-      }
-    });
+    _matchSub = _matchService.onMatchUpdate.listen(_handleMatchEvent);
   }
 
   @override
@@ -89,74 +67,168 @@ class _MatchScreenState extends State<MatchScreen> {
     super.dispose();
   }
 
-  // ---------------------------------------------------------------------------
-  // Countdown
-  // ---------------------------------------------------------------------------
-  void _startCountdown() {
+  // ===========================================================================
+  // Event Handler — Central routing for all match-update events
+  // ===========================================================================
+  void _handleMatchEvent(MatchUpdateEvent event) {
+    if (!mounted) return;
+
+    switch (event.status) {
+      // --- Confirmation phase ---
+      case 'AWAITING_CONFIRMATION':
+        if (event.matchId != _currentMatchId) return;
+        _reporterUsername = event.reporterUsername;
+        _claimedWinner = event.claimedWinner;
+
+        final bool iAmReporter =
+            event.reporterUsername == _matchService.myUsername;
+
+        setState(() {
+          _phase = iAmReporter
+              ? MatchPhase.waitingForConfirm
+              : MatchPhase.confirming;
+        });
+        _startCountdown(_confirmTimeoutSeconds, _onConfirmTimeout);
+        break;
+
+      // --- Rematch offered (replaces ENDED / DISPUTED) ---
+      case 'REMATCH_OFFERED':
+        if (event.matchId != _currentMatchId) return;
+        _countdownTimer?.cancel();
+
+        setState(() {
+          _matchResult = event.result;
+          _matchWinner = event.claimedWinner;
+          _rematchWaiting = false;
+          _isSubmitting = false;
+          _phase = MatchPhase.rematchOffer;
+        });
+        _startCountdown(_rematchTimeoutSeconds, _onRematchTimeout);
+        break;
+
+      // --- Rematch: this player accepted, waiting for opponent ---
+      case 'REMATCH_WAITING':
+        if (event.matchId != _currentMatchId) return;
+        setState(() {
+          _rematchWaiting = true;
+        });
+        break;
+
+      // --- Rematch declined: pop back to lobby ---
+      case 'REMATCH_DECLINED':
+        if (event.matchId != _currentMatchId) return;
+        _countdownTimer?.cancel();
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+        break;
+
+      // --- Match started (new match or rematch accepted) ---
+      case 'STARTED':
+        _countdownTimer?.cancel();
+        // Reset for new match — could be the initial start or a rematch
+        setState(() {
+          _currentMatchId = event.matchId!;
+          _currentOpponent = event.player1 == _matchService.myUsername
+              ? event.player2
+              : event.player1;
+          _phase = MatchPhase.playing;
+          _isSubmitting = false;
+          _reporterUsername = null;
+          _claimedWinner = null;
+          _matchResult = null;
+          _matchWinner = null;
+          _rematchWaiting = false;
+        });
+        break;
+    }
+  }
+
+  // ===========================================================================
+  // Countdown logic
+  // ===========================================================================
+  void _startCountdown(int seconds, VoidCallback onTimeout) {
     _countdownTimer?.cancel();
-    _secondsRemaining = _confirmTimeoutSeconds;
+    _secondsRemaining = seconds;
 
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) {
         timer.cancel();
         return;
       }
-      setState(() => _secondsRemaining--);
+      setState(() {
+        _secondsRemaining--;
+      });
       if (_secondsRemaining <= 0) {
         timer.cancel();
-        _handleTimeout();
+        onTimeout();
       }
     });
   }
 
-  void _handleTimeout() {
+  void _onConfirmTimeout() {
+    // Auto-agree with reporter's claim
     if (_phase == MatchPhase.confirming && _claimedWinner != null) {
-      // Auto-confirm: agree with the reporter's claim
-      _matchService.confirmResult(widget.matchId, _claimedWinner!);
+      _matchService.confirmResult(_currentMatchId, _claimedWinner!);
     }
-    // If we're the reporter (waitingForConfirm), the opponent's client
-    // handles the auto-confirm. We just keep waiting.
   }
 
-  // ---------------------------------------------------------------------------
-  // Actions
-  // ---------------------------------------------------------------------------
+  void _onRematchTimeout() {
+    // Auto-decline rematch
+    if (_phase == MatchPhase.rematchOffer && !_rematchWaiting) {
+      _matchService.requestRematch(_currentMatchId, false);
+    }
+  }
 
-  /// First report: either player taps "I Won" or "I Lost" during playing phase.
-  Future<void> _report(String claimedWinner) async {
+  // ===========================================================================
+  // Player actions
+  // ===========================================================================
+
+  /// Phase 1 (playing): First player reports who won.
+  Future<void> _reportWinner(String winnerUsername) async {
     setState(() => _isSubmitting = true);
-    await _matchService.reportResult(widget.matchId, claimedWinner);
-    // Don't reset _isSubmitting — the AWAITING_CONFIRMATION event will
-    // transition the phase, which rebuilds the entire view.
+    final success =
+        await _matchService.reportResult(_currentMatchId, winnerUsername);
+    if (!success && mounted) {
+      setState(() => _isSubmitting = false);
+    }
   }
 
-  /// Confirmation: the non-reporter taps "I Won" or "I Lost" during confirming phase.
-  Future<void> _confirm(String claimedWinner) async {
+  /// Phase 3 (confirming): Second player submits their independent claim.
+  Future<void> _confirmWinner(String winnerUsername) async {
+    setState(() => _isSubmitting = true);
     _countdownTimer?.cancel();
+    await _matchService.confirmResult(_currentMatchId, winnerUsername);
+    // Don't reset _isSubmitting — REMATCH_OFFERED event will handle transition
+  }
+
+  /// Phase 6 (rematchOffer): Player taps Rematch or Leave.
+  Future<void> _respondRematch(bool accept) async {
     setState(() => _isSubmitting = true);
-    await _matchService.confirmResult(widget.matchId, claimedWinner);
-    // ENDED or DISPUTED event will transition the phase.
+    if (!accept) {
+      _countdownTimer?.cancel();
+    }
+    await _matchService.requestRematch(_currentMatchId, accept);
+    if (!accept && mounted) {
+      // If decline, server sends REMATCH_DECLINED which pops us back.
+      // But if the HTTP call itself fails, re-enable buttons.
+      setState(() => _isSubmitting = false);
+    }
   }
 
-  void _popAfterDelay() {
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) Navigator.of(context).pop();
-    });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Build
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
+  // UI Build
+  // ===========================================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Active Match'),
-        automaticallyImplyLeading: false,
+        title: Text('vs $_currentOpponent'),
+        automaticallyImplyLeading: false, // no back button during match
       ),
       body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(32),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
           child: _buildPhaseContent(),
         ),
       ),
@@ -166,288 +238,278 @@ class _MatchScreenState extends State<MatchScreen> {
   Widget _buildPhaseContent() {
     switch (_phase) {
       case MatchPhase.playing:
-        return _buildPlayingView();
+        return _buildPlayingPhase();
       case MatchPhase.waitingForConfirm:
-        return _buildWaitingView();
+        return _buildWaitingPhase();
       case MatchPhase.confirming:
-        return _buildConfirmingView();
-      case MatchPhase.ended:
-        return _buildEndedView();
-      case MatchPhase.disputed:
-        return _buildDisputedView();
+        return _buildConfirmingPhase();
+      case MatchPhase.rematchOffer:
+        return _buildRematchPhase();
     }
   }
 
-  // ===========================================================================
-  // PLAYING — Both players see "I Won" / "I Lost"
-  // ===========================================================================
-  Widget _buildPlayingView() {
+  // --- Phase 1: Playing ---
+  Widget _buildPlayingPhase() {
     return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.sports_esports, size: 80, color: Color(0xFFBD0910)),
+        const Icon(Icons.sports_esports, size: 64, color: Colors.blueGrey),
         const SizedBox(height: 24),
-        const Text('Match In Progress',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+        Text('Match in progress',
+            style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 8),
-        Text('vs ${widget.opponentUsername}',
-            style: TextStyle(fontSize: 20, color: Colors.grey[400])),
-        const SizedBox(height: 8),
-        _buildMatchIdLabel(),
-        const SizedBox(height: 48),
-        const Text('Report the result:', style: TextStyle(fontSize: 16)),
-        const SizedBox(height: 16),
-        _buildWinLossButtons(
-          onWin: () => _report(_matchService.myUsername!),
-          onLoss: () => _report(widget.opponentUsername),
-          disabled: _isSubmitting,
+        Text('Playing against $_currentOpponent',
+            style: Theme.of(context).textTheme.bodyLarge),
+        const SizedBox(height: 32),
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _isSubmitting
+                    ? null
+                    : () => _reportWinner(_matchService.myUsername!),
+                icon: const Icon(Icons.emoji_events),
+                label: const Text('I Won'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _isSubmitting
+                    ? null
+                    : () => _reportWinner(_currentOpponent),
+                icon: const Icon(Icons.close),
+                label: const Text('I Lost'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+          ],
         ),
         if (_isSubmitting) ...[
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
           const CircularProgressIndicator(),
-          const SizedBox(height: 8),
-          const Text('Submitting...'),
         ],
       ],
     );
   }
 
-  // ===========================================================================
-  // WAITING — Reporter sees countdown while opponent confirms
-  // ===========================================================================
-  Widget _buildWaitingView() {
-    // What did I report?
-    final bool iClaimedWin = _claimedWinner == _matchService.myUsername;
-    final String myReport = iClaimedWin
-        ? 'You reported: You won'
-        : 'You reported: ${widget.opponentUsername} won';
+  // --- Phase 2: Waiting for confirm (reporter's view) ---
+  Widget _buildWaitingPhase() {
+    final iClaimedWin = _claimedWinner == _matchService.myUsername;
 
     return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.hourglass_top, size: 80, color: Colors.orange),
+        _buildCountdownRing(_confirmTimeoutSeconds),
         const SizedBox(height: 24),
-        const Text('Awaiting Confirmation',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        Text(myReport, style: TextStyle(fontSize: 16, color: Colors.grey[400])),
-        const SizedBox(height: 8),
-        Text('Waiting for ${widget.opponentUsername} to respond...',
-            style: TextStyle(fontSize: 14, color: Colors.grey[500])),
-        const SizedBox(height: 32),
-        _buildCountdownRing(),
-        const SizedBox(height: 16),
         Text(
-          'If no response, your result stands.',
-          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+          iClaimedWin ? 'You reported: I Won' : 'You reported: I Lost',
+          style: Theme.of(context).textTheme.titleLarge,
         ),
-      ],
-    );
-  }
-
-  // ===========================================================================
-  // CONFIRMING — Opponent sees the claim and picks "I Won" / "I Lost"
-  // ===========================================================================
-  Widget _buildConfirmingView() {
-    // Describe the reporter's claim in relatable terms
-    final String claimDescription;
-    if (_claimedWinner == _reporterUsername) {
-      claimDescription = '$_reporterUsername says they won.';
-    } else {
-      claimDescription = '$_reporterUsername says you won.';
-    }
-
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Icon(Icons.how_to_vote, size: 80, color: Colors.orange),
-        const SizedBox(height: 24),
-        const Text('Confirm the Result',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
         const SizedBox(height: 12),
-        // Show what the reporter claimed
+        Text('Waiting for $_currentOpponent to confirm...',
+            style: Theme.of(context)
+                .textTheme
+                .bodyLarge
+                ?.copyWith(color: Colors.grey[600])),
+      ],
+    );
+  }
+
+  // --- Phase 3: Confirming (opponent's view) ---
+  Widget _buildConfirmingPhase() {
+    final reporterClaimedWin = _claimedWinner == _reporterUsername;
+    final bannerText = reporterClaimedWin
+        ? '$_reporterUsername says they won'
+        : '$_reporterUsername says they lost';
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildCountdownRing(_confirmTimeoutSeconds),
+        const SizedBox(height: 16),
         Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.orange.withOpacity(0.12),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.orange.withOpacity(0.3)),
+            color: Colors.orange.shade50,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.orange.shade200),
           ),
-          child: Text(
-            claimDescription,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: Colors.orange),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.info_outline, color: Colors.orange.shade700),
+              const SizedBox(width: 8),
+              Text(bannerText,
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange.shade900)),
+            ],
           ),
         ),
         const SizedBox(height: 24),
-        const Text('Select the match outcome:', style: TextStyle(fontSize: 16)),
+        Text('What was the result?',
+            style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 16),
-        _buildWinLossButtons(
-          onWin: () => _confirm(_matchService.myUsername!),
-          onLoss: () => _confirm(widget.opponentUsername),
-          disabled: _isSubmitting,
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _isSubmitting
+                    ? null
+                    : () => _confirmWinner(_matchService.myUsername!),
+                icon: const Icon(Icons.emoji_events),
+                label: const Text('I Won'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _isSubmitting
+                    ? null
+                    : () => _confirmWinner(_currentOpponent),
+                icon: const Icon(Icons.close),
+                label: const Text('I Lost'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+          ],
         ),
-        if (_isSubmitting) ...[
-          const SizedBox(height: 24),
-          const CircularProgressIndicator(),
+      ],
+    );
+  }
+
+  // --- Phase 6: Rematch offer ---
+  Widget _buildRematchPhase() {
+    final isDisputed = _matchResult == 'DISPUTED';
+    final iWon = _matchWinner == _matchService.myUsername;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Result display
+        Icon(
+          isDisputed
+              ? Icons.warning_amber_rounded
+              : (iWon ? Icons.emoji_events : Icons.close),
+          size: 64,
+          color:
+              isDisputed ? Colors.orange : (iWon ? Colors.amber : Colors.red),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          isDisputed ? 'Disputed' : (iWon ? 'You Won!' : 'You Lost'),
+          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: isDisputed
+                    ? Colors.orange
+                    : (iWon ? Colors.green : Colors.red),
+              ),
+        ),
+        if (isDisputed) ...[
+          const SizedBox(height: 4),
+          Text('No winner recorded',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: Colors.grey[600])),
         ],
         const SizedBox(height: 32),
-        _buildCountdownRing(),
-        const SizedBox(height: 8),
-        Text(
-          'Auto-accepts in $_secondsRemaining seconds',
-          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-        ),
-      ],
-    );
-  }
 
-  // ===========================================================================
-  // ENDED — Both players agreed
-  // ===========================================================================
-  Widget _buildEndedView() {
-    final String winnerDisplay;
-    if (_claimedWinner == _matchService.myUsername) {
-      winnerDisplay = 'You won!';
-    } else if (_claimedWinner == widget.opponentUsername) {
-      winnerDisplay = '${widget.opponentUsername} won.';
-    } else {
-      winnerDisplay = 'Match complete.';
-    }
-
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Icon(Icons.check_circle, size: 80, color: Colors.green),
+        // Countdown
+        _buildCountdownRing(_rematchTimeoutSeconds),
         const SizedBox(height: 24),
-        const Text('Match Complete',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        Text(winnerDisplay,
-            style: TextStyle(fontSize: 18, color: Colors.grey[400])),
-        const SizedBox(height: 24),
-        const Text('Returning to lobby...',
-            style: TextStyle(color: Colors.green)),
-      ],
-    );
-  }
 
-  // ===========================================================================
-  // DISPUTED — Players disagreed
-  // ===========================================================================
-  Widget _buildDisputedView() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Icon(Icons.warning_amber_rounded, size: 80, color: Colors.red),
-        const SizedBox(height: 24),
-        const Text('Result Disputed',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        Text(
-          'You and ${widget.opponentUsername} reported different outcomes.\nThis match has been flagged for review.',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 16, color: Colors.grey[400]),
-        ),
-        const SizedBox(height: 24),
-        const Text('Returning to lobby...',
-            style: TextStyle(color: Colors.red)),
-      ],
-    );
-  }
-
-  // ===========================================================================
-  // Shared widgets
-  // ===========================================================================
-
-  Widget _buildWinLossButtons({
-    required VoidCallback onWin,
-    required VoidCallback onLoss,
-    required bool disabled,
-  }) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: ElevatedButton.icon(
-              onPressed: disabled ? null : onWin,
-              icon: const Icon(Icons.emoji_events),
-              label: const Text('I Won'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green[700],
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                textStyle:
-                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        // Rematch prompt
+        if (_rematchWaiting) ...[
+          Text('Waiting for $_currentOpponent...',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(color: Colors.grey[600])),
+          const SizedBox(height: 16),
+          const CircularProgressIndicator(),
+        ] else ...[
+          Text('Rematch?', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _isSubmitting ? null : () => _respondRematch(true),
+                  icon: const Icon(Icons.replay),
+                  label: const Text('Rematch'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: ElevatedButton.icon(
-              onPressed: disabled ? null : onLoss,
-              icon: const Icon(Icons.sentiment_dissatisfied),
-              label: const Text('I Lost'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red[700],
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                textStyle:
-                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              const SizedBox(width: 16),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed:
+                      _isSubmitting ? null : () => _respondRematch(false),
+                  icon: const Icon(Icons.exit_to_app),
+                  label: const Text('Leave'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
-        ),
+        ],
       ],
     );
   }
 
-  Widget _buildCountdownRing() {
-    final double progress = _secondsRemaining / _confirmTimeoutSeconds;
-    final Color ringColor = _secondsRemaining > 5 ? Colors.orange : Colors.red;
+  // --- Shared countdown ring widget ---
+  Widget _buildCountdownRing(int totalSeconds) {
+    final progress = totalSeconds > 0 ? _secondsRemaining / totalSeconds : 0.0;
+    final color = _secondsRemaining > 5 ? Colors.blue : Colors.red;
 
     return SizedBox(
-      width: 90,
-      height: 90,
+      width: 60,
+      height: 60,
       child: Stack(
         fit: StackFit.expand,
         children: [
           CircularProgressIndicator(
             value: progress,
-            strokeWidth: 6,
-            backgroundColor: Colors.grey[800],
-            valueColor: AlwaysStoppedAnimation<Color>(ringColor),
+            strokeWidth: 4,
+            backgroundColor: Colors.grey.shade200,
+            valueColor: AlwaysStoppedAnimation<Color>(color),
           ),
           Center(
             child: Text(
               '$_secondsRemaining',
               style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: ringColor,
-              ),
+                  fontSize: 18, fontWeight: FontWeight.bold, color: color),
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildMatchIdLabel() {
-    return Text(
-      'Match: ${widget.matchId.substring(0, 8)}...',
-      style: TextStyle(
-        fontSize: 12,
-        color: Colors.grey[600],
-        fontFamily: 'monospace',
       ),
     );
   }

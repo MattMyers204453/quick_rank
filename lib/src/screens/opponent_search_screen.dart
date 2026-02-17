@@ -213,7 +213,9 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
 
     if (!mounted) return;
     setState(() {
-      _results = results;
+      _results = results
+          .where((player) => player.username != _matchService.myUsername)
+          .toList();
       _isLoading = false;
     });
   }
@@ -238,7 +240,7 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
 
     setState(() => _isChallenging = true);
 
-    final inviteId = await _matchService.sendInvite(opponent.username);
+    final inviteId = await _matchService.sendChallenge(opponent.username);
 
     if (!mounted) return;
     setState(() => _isChallenging = false);
@@ -316,7 +318,7 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
                             _pendingInviteTarget = null;
                             Navigator.of(dialogContext).pop();
                             if (inviteId != null && opponent != null) {
-                              _matchService.cancelInvite(inviteId, opponent);
+                              _matchService.cancelChallenge(inviteId, opponent);
                             }
                           },
                           style: OutlinedButton.styleFrom(
@@ -398,13 +400,14 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
                     'Challenge Received!',
                     style: TextStyle(
                       fontSize: 20,
+                      color: Colors.white,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 12),
                   Text(
                     '${invite.from} wants to fight!',
-                    style: const TextStyle(fontSize: 16),
+                    style: const TextStyle(fontSize: 16, color: Colors.white),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 24),
@@ -416,7 +419,7 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
                             if (!_isInviteDialogShowing) return;
                             _isInviteDialogShowing = false;
                             Navigator.of(dialogContext).pop();
-                            _matchService.declineInvite(
+                            _matchService.declineChallenge(
                                 invite.inviteId, invite.from);
                           },
                           style: OutlinedButton.styleFrom(
@@ -435,7 +438,7 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
                             if (!_isInviteDialogShowing) return;
                             _isInviteDialogShowing = false;
                             Navigator.of(dialogContext).pop();
-                            _matchService.acceptInvite(
+                            _matchService.acceptChallenge(
                                 invite.inviteId, invite.from);
                           },
                           style: ElevatedButton.styleFrom(
@@ -620,15 +623,11 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
                         itemCount: _results.length,
                         itemBuilder: (context, index) {
                           final player = _results[index];
-                          final isMe =
-                              player.username == _matchService.myUsername;
 
                           return Card(
                             child: ListTile(
                               leading: CircleAvatar(
-                                backgroundColor: isMe
-                                    ? Colors.grey
-                                    : const Color(0xFFBD0910),
+                                backgroundColor: const Color(0xFFBD0910),
                                 child: Text(
                                   player.username[0].toUpperCase(),
                                   style: const TextStyle(color: Colors.white),
@@ -640,28 +639,25 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
                                     fontWeight: FontWeight.bold),
                               ),
                               subtitle: Text(player.character),
-                              trailing: isMe
-                                  ? const Chip(label: Text('You'))
-                                  : ElevatedButton(
-                                      onPressed: _isChallenging
-                                          ? null
-                                          : () => _sendChallenge(player),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor:
-                                            const Color(0xFFBD0910),
-                                        foregroundColor: Colors.white,
-                                      ),
-                                      child: _isChallenging
-                                          ? const SizedBox(
-                                              width: 20,
-                                              height: 20,
-                                              child: CircularProgressIndicator(
-                                                color: Colors.white,
-                                                strokeWidth: 2,
-                                              ),
-                                            )
-                                          : const Text('Challenge'),
-                                    ),
+                              trailing: ElevatedButton(
+                                onPressed: _isChallenging
+                                    ? null
+                                    : () => _sendChallenge(player),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFBD0910),
+                                  foregroundColor: Colors.white,
+                                ),
+                                child: _isChallenging
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          color: Colors.white,
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Text('Challenge'),
+                              ),
                             ),
                           );
                         },

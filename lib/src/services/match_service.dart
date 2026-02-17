@@ -3,17 +3,17 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:stomp_dart_client/stomp_dart_client.dart';
 
-/// Payload received on /user/queue/invites
+// =============================================================================
+// Data classes
+// =============================================================================
+
 class InvitePayload {
   final String inviteId;
   final String from;
-  final String status; // PENDING or CANCELLED
+  final String status; // PENDING, CANCELLED
 
-  InvitePayload({
-    required this.inviteId,
-    required this.from,
-    required this.status,
-  });
+  InvitePayload(
+      {required this.inviteId, required this.from, required this.status});
 
   factory InvitePayload.fromJson(Map<String, dynamic> json) {
     return InvitePayload(
@@ -24,17 +24,16 @@ class InvitePayload {
   }
 }
 
-/// Payload received on /user/queue/match-updates
 class MatchUpdateEvent {
   final String? matchId;
-  final String
-      status; // STARTED, AWAITING_CONFIRMATION, ENDED, DISPUTED, DECLINED
+  final String status; // STARTED, AWAITING_CONFIRMATION, REMATCH_OFFERED,
+  // REMATCH_WAITING, REMATCH_DECLINED, DECLINED
   final String player1;
   final String player2;
+  final String? reporterUsername; // AWAITING_CONFIRMATION only
   final String?
-      reporterUsername; // who submitted the first report (AWAITING_CONFIRMATION only)
-  final String?
-      claimedWinner; // who the reporter claims won (AWAITING_CONFIRMATION only)
+      claimedWinner; // AWAITING_CONFIRMATION & REMATCH_OFFERED (winner)
+  final String? result; // REMATCH_OFFERED only: "COMPLETED" or "DISPUTED"
 
   MatchUpdateEvent({
     required this.matchId,
@@ -43,6 +42,7 @@ class MatchUpdateEvent {
     required this.player2,
     this.reporterUsername,
     this.claimedWinner,
+    this.result,
   });
 
   factory MatchUpdateEvent.fromJson(Map<String, dynamic> json) {
@@ -53,11 +53,15 @@ class MatchUpdateEvent {
       player2: json['player2'] as String,
       reporterUsername: json['reporterUsername'] as String?,
       claimedWinner: json['claimedWinner'] as String?,
+      result: json['result'] as String?,
     );
   }
 }
 
-/// Singleton service managing STOMP WebSocket + HTTP match endpoints.
+// =============================================================================
+// MatchService — Singleton
+// =============================================================================
+
 class MatchService {
   // ---------------------------------------------------------------------------
   // Singleton
@@ -89,7 +93,7 @@ class MatchService {
   String? get myUsername => _myUsername;
   bool get isConnected => _isConnected;
 
-  /// The current active match ID (set on STARTED, cleared on ENDED/DISPUTED).
+  /// The current active match ID (set on STARTED, cleared on REMATCH_DECLINED).
   String? activeMatchId;
 
   /// The opponent username in the current active match.
@@ -157,8 +161,7 @@ class MatchService {
         if (frame.body == null) return;
         final json = jsonDecode(frame.body!);
         final invite = InvitePayload.fromJson(json);
-        print(
-            '[WS] Invite [${invite.status}] from ${invite.from}: ${invite.inviteId}');
+        print('[WS] Invite received from ${invite.from}: ${invite.inviteId}');
         _inviteController.add(invite);
       },
     );
@@ -172,14 +175,12 @@ class MatchService {
         final event = MatchUpdateEvent.fromJson(json);
         print('[WS] Match update [${event.status}]: ${event.matchId}');
 
+        // Track active match state
         if (event.status == 'STARTED') {
           activeMatchId = event.matchId;
           activeOpponent =
-              (event.player1 == _myUsername) ? event.player2 : event.player1;
-        }
-        if (event.status == 'ENDED' ||
-            event.status == 'DECLINED' ||
-            event.status == 'DISPUTED') {
+              event.player1 == _myUsername ? event.player2 : event.player1;
+        } else if (event.status == 'REMATCH_DECLINED') {
           activeMatchId = null;
           activeOpponent = null;
         }
@@ -189,23 +190,21 @@ class MatchService {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // 2. HTTP endpoints
-  // ---------------------------------------------------------------------------
-
-  /// Ensure player exists (dev-login). Fire-and-forget.
   Future<void> _devLogin(String username) async {
     try {
-      await http.post(
-        Uri.parse('$_httpBase/dev/auth/login?username=$username'),
-      );
+      await http
+          .post(Uri.parse('$_httpBase/dev/auth/login?username=$username'));
+      print('[HTTP] Dev login OK for $username');
     } catch (e) {
-      print('[HTTP] Dev-login failed: $e');
+      print('[HTTP] Dev login error: $e');
     }
   }
 
-  /// Send a challenge to [targetUsername]. Returns the inviteId on success.
-  Future<String?> sendInvite(String targetUsername) async {
+  // ---------------------------------------------------------------------------
+  // 2. Challenge Flow — invite, accept, decline, cancel
+  // ---------------------------------------------------------------------------
+
+  Future<String?> sendChallenge(String targetUsername) async {
     try {
       final res = await http.post(
         Uri.parse('$_httpBase/matches/invite'),
@@ -218,7 +217,7 @@ class MatchService {
 
       if (res.statusCode == 200) {
         print('[HTTP] Invite sent. ID: ${res.body}');
-        return res.body;
+        return res.body; // inviteId
       } else {
         print('[HTTP] Invite failed: ${res.body}');
         _errorController.add(res.body);
@@ -231,38 +230,10 @@ class MatchService {
     }
   }
 
-  /// Cancel a pending invite (challenger withdraws).
-  Future<bool> cancelInvite(String inviteId, String opponentUsername) async {
+  Future<void> acceptChallenge(
+      String inviteId, String challengerUsername) async {
     try {
-      final res = await http.post(
-        Uri.parse('$_httpBase/matches/cancel'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'inviteId': inviteId,
-          'challengerUsername': _myUsername,
-          'opponentUsername': opponentUsername,
-        }),
-      );
-
-      if (res.statusCode == 200) {
-        print('[HTTP] Invite cancelled.');
-        return true;
-      } else {
-        print('[HTTP] Cancel failed: ${res.body}');
-        _errorController.add(res.body);
-        return false;
-      }
-    } catch (e) {
-      print('[HTTP] Cancel error: $e');
-      _errorController.add('Network error: $e');
-      return false;
-    }
-  }
-
-  /// Accept a pending invite.
-  Future<bool> acceptInvite(String inviteId, String challengerUsername) async {
-    try {
-      final res = await http.post(
+      await http.post(
         Uri.parse('$_httpBase/matches/accept'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -271,26 +242,17 @@ class MatchService {
           'opponentUsername': _myUsername,
         }),
       );
-
-      if (res.statusCode == 200) {
-        print('[HTTP] Invite accepted.');
-        return true;
-      } else {
-        print('[HTTP] Accept failed: ${res.body}');
-        _errorController.add('Accept failed: ${res.body}');
-        return false;
-      }
+      print('[HTTP] Invite accepted');
     } catch (e) {
       print('[HTTP] Accept error: $e');
       _errorController.add('Network error: $e');
-      return false;
     }
   }
 
-  /// Decline a pending invite.
-  Future<bool> declineInvite(String inviteId, String challengerUsername) async {
+  Future<void> declineChallenge(
+      String inviteId, String challengerUsername) async {
     try {
-      final res = await http.post(
+      await http.post(
         Uri.parse('$_httpBase/matches/decline'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -299,16 +261,35 @@ class MatchService {
           'opponentUsername': _myUsername,
         }),
       );
-
-      return res.statusCode == 200;
+      print('[HTTP] Invite declined');
     } catch (e) {
       print('[HTTP] Decline error: $e');
-      return false;
+      _errorController.add('Network error: $e');
     }
   }
 
-  /// Report match result (first player submits their claim).
-  /// [claimedWinner] is the username of whoever this player says won.
+  Future<void> cancelChallenge(String inviteId, String targetUsername) async {
+    try {
+      await http.post(
+        Uri.parse('$_httpBase/matches/cancel'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'inviteId': inviteId,
+          'challengerUsername': _myUsername,
+          'opponentUsername': targetUsername,
+        }),
+      );
+      print('[HTTP] Invite cancelled');
+    } catch (e) {
+      print('[HTTP] Cancel error: $e');
+      _errorController.add('Network error: $e');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 3. Match Flow — report, confirm
+  // ---------------------------------------------------------------------------
+
   Future<bool> reportResult(String matchId, String claimedWinner) async {
     try {
       final res = await http.post(
@@ -336,7 +317,6 @@ class MatchService {
     }
   }
 
-  /// Confirm match result (second player responds with their independent view).
   Future<bool> confirmResult(String matchId, String claimedWinner) async {
     try {
       final res = await http.post(
@@ -359,6 +339,41 @@ class MatchService {
       }
     } catch (e) {
       print('[HTTP] Confirm error: $e');
+      _errorController.add('Network error: $e');
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 4. Rematch Flow
+  // ---------------------------------------------------------------------------
+
+  /// Send rematch response (accept or decline).
+  /// Called by MatchScreen when player taps "Rematch" or "Leave",
+  /// or automatically on timeout (accept: false).
+  Future<bool> requestRematch(String matchId, bool accept) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$_httpBase/matches/rematch'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'matchId': matchId,
+          'username': _myUsername,
+          'accept': accept,
+        }),
+      );
+
+      if (res.statusCode == 200) {
+        print(
+            '[HTTP] Rematch response sent (accept: $accept). Server: ${res.body}');
+        return true;
+      } else {
+        print('[HTTP] Rematch failed: ${res.body}');
+        _errorController.add(res.body);
+        return false;
+      }
+    } catch (e) {
+      print('[HTTP] Rematch error: $e');
       _errorController.add('Network error: $e');
       return false;
     }
