@@ -1,0 +1,111 @@
+import 'package:flutter/material.dart';
+
+class CharactersUtil {
+  static const List<(String, String)> _characters = [
+    ('Banjo & Kazooie', 'assets/images/character_icons/banjo_and_kazooie.png'),
+    ('Bayonetta', 'assets/images/character_icons/bayonetta.png'),
+    ('Bowser', 'assets/images/character_icons/bowser.png'),
+    ('Bowser Jr.', 'assets/images/character_icons/bowser_jr.png'),
+    ('Byleth', 'assets/images/character_icons/byleth.png'),
+    ('Captain Falcon', 'assets/images/character_icons/captain_falcon.png'),
+    ('Chrom', 'assets/images/character_icons/chrom.png'),
+    ('Cloud', 'assets/images/character_icons/cloud.png'),
+    ('Corrin', 'assets/images/character_icons/corrin.png'),
+    ('Daisy', 'assets/images/character_icons/daisy.png'),
+    ('Dark Pit', 'assets/images/character_icons/dark_pit.png'),
+    ('Dark Samus', 'assets/images/character_icons/dark_samus.png'),
+    ('Diddy Kong', 'assets/images/character_icons/diddy_kong.png'),
+    ('Donkey Kong', 'assets/images/character_icons/donkey_kong.png'),
+    ('Dr. Mario', 'assets/images/character_icons/dr_mario.png'),
+    ('Duck Hunt', 'assets/images/character_icons/duck_hunt.png'),
+    ('Falco', 'assets/images/character_icons/falco.png'),
+    ('Fox', 'assets/images/character_icons/fox.png'),
+    ('Ganondorf', 'assets/images/character_icons/ganondorf.png'),
+    ('Greninja', 'assets/images/character_icons/greninja.png'),
+    ('Hero', 'assets/images/character_icons/dq_hero.png'),
+    ('Ice Climbers', 'assets/images/character_icons/ice_climbers.png'),
+    ('Ike', 'assets/images/character_icons/ike.png'),
+    ('Incineroar', 'assets/images/character_icons/gaogaen.png'),
+    ('Inkling', 'assets/images/character_icons/inkling.png'),
+    ('Isabelle', 'assets/images/character_icons/isabelle.png'),
+    ('Jigglypuff', 'assets/images/character_icons/jigglypuff.png'),
+    ('Joker', 'assets/images/character_icons/joker.png'),
+    ('Kazuya', 'assets/images/character_icons/kazuya.png'),
+    ('Ken', 'assets/images/character_icons/ken.png'),
+    ('King Dedede', 'assets/images/character_icons/king_dedede.png'),
+    ('King K. Rool', 'assets/images/character_icons/king_k_rool.png'),
+    ('Kirby', 'assets/images/character_icons/kirby.png'),
+    ('Link', 'assets/images/character_icons/link.png'),
+    ('Little Mac', 'assets/images/character_icons/little_mac.png'),
+    ('Lucario', 'assets/images/character_icons/lucario.png'),
+    ('Lucas', 'assets/images/character_icons/lucas.png'),
+    ('Lucina', 'assets/images/character_icons/lucina.png'),
+    ('Luigi', 'assets/images/character_icons/luigi.png'),
+    ('Mario', 'assets/images/character_icons/mario.png'),
+    ('Marth', 'assets/images/character_icons/marth.png'),
+    ('Mega Man', 'assets/images/character_icons/mega_man.png'),
+    ('Meta Knight', 'assets/images/character_icons/meta_knight.png'),
+    ('Mewtwo', 'assets/images/character_icons/mewtwo.png'),
+    ('Mii Fighter', 'assets/images/character_icons/mii_fighter.png'),
+    ('Min Min', 'assets/images/character_icons/minmin.png'),
+    ('Mr. Game & Watch', 'assets/images/character_icons/mr_game_and_watch.png'),
+    ('Ness', 'assets/images/character_icons/ness.png'),
+    ('Olimar', 'assets/images/character_icons/olimar.png'),
+    ('Pac-Man', 'assets/images/character_icons/pac_man.png'),
+    ('Palutena', 'assets/images/character_icons/palutena.png'),
+    ('Peach', 'assets/images/character_icons/peach.png'),
+    ('Pichu', 'assets/images/character_icons/pichu.png'),
+    ('Pikachu', 'assets/images/character_icons/pikachu.png'),
+    ('Piranha Plant', 'assets/images/character_icons/packun_flower.png'),
+    ('Pit', 'assets/images/character_icons/pit.png'),
+    ('Pokémon Trainer', 'assets/images/character_icons/pokemon_trainer.png'),
+    ('Pyra/Mythra', 'assets/images/character_icons/homura.png'),
+    ('R.O.B.', 'assets/images/character_icons/rob.png'),
+    ('Richter', 'assets/images/character_icons/richter.png'),
+    ('Ridley', 'assets/images/character_icons/ridley.png'),
+    ('Robin', 'assets/images/character_icons/robin.png'),
+    ('Rosalina & Luma', 'assets/images/character_icons/rosalina_and_luma.png'),
+    ('Roy', 'assets/images/character_icons/roy.png'),
+    ('Ryu', 'assets/images/character_icons/ryu.png'),
+    ('Samus', 'assets/images/character_icons/samus.png'),
+    ('Sephiroth', 'assets/images/character_icons/sephiroth.png'),
+    ('Sheik', 'assets/images/character_icons/sheik.png'),
+    ('Shulk', 'assets/images/character_icons/shulk.png'),
+    ('Simon', 'assets/images/character_icons/simon.png'),
+    ('Snake', 'assets/images/character_icons/snake.png'),
+    ('Sonic', 'assets/images/character_icons/sonic.png'),
+    ('Sora', 'assets/images/character_icons/sora.png'),
+    ('Steve', 'assets/images/character_icons/steve.png'),
+    ('Terry', 'assets/images/character_icons/Terry.png'),
+    ('Toon Link', 'assets/images/character_icons/toon_link.png'),
+    ('Villager', 'assets/images/character_icons/villager.png'),
+    ('Wario', 'assets/images/character_icons/wario.png'),
+    ('Wii Fit Trainer', 'assets/images/character_icons/wii_fit_trainer.png'),
+    ('Wolf', 'assets/images/character_icons/wolf.png'),
+    ('Yoshi', 'assets/images/character_icons/yoshi.png'),
+    ('Young Link', 'assets/images/character_icons/young_link.png'),
+    ('Zelda', 'assets/images/character_icons/zelda.png'),
+    ('Zero Suit Samus', 'assets/images/character_icons/zero_suit_samus.png'),
+  ];
+
+  // Cache the built dropdown items
+  static List<DropdownMenuItem<String>>? _cachedDropdownItems;
+
+  static List<DropdownMenuItem<String>> getCharacterDropdownItems() {
+    // Build once, return cached version thereafter
+    _cachedDropdownItems ??= _characters.map((char) {
+      return DropdownMenuItem<String>(
+        value: char.$1,
+        child: Row(
+          children: [
+            Image.asset(char.$2, width: 32, height: 32),
+            SizedBox(width: 12),
+            Text(char.$1),
+          ],
+        ),
+      );
+    }).toList();
+
+    return _cachedDropdownItems!;
+  }
+}

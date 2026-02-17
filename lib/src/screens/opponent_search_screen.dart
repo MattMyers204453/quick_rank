@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/player.dart';
 import '../services/api_service.dart';
 import '../services/match_service.dart';
+import '../util/characters_util.dart';
 import 'match_screen.dart';
 
 class OpponentSearchScreen extends StatefulWidget {
@@ -27,7 +28,7 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
   // --- Check-In State ---
   bool _isCheckedIn = false;
   final TextEditingController _myUsernameController = TextEditingController();
-  final TextEditingController _myCharacterController = TextEditingController();
+  String? selectedCharacter;
   bool _isCheckingInOrOut = false;
 
   // --- WebSocket / Match State ---
@@ -46,9 +47,12 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
   StreamSubscription<bool>? _connectionSub;
   StreamSubscription<String>? _errorSub;
 
+  late final List<DropdownMenuItem<String>> _dropdownCharacterItems;
+
   @override
   void initState() {
     super.initState();
+    _dropdownCharacterItems = CharactersUtil.getCharacterDropdownItems();
     _setupListeners();
   }
 
@@ -115,7 +119,6 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
     _debounce?.cancel();
     _searchController.dispose();
     _myUsernameController.dispose();
-    _myCharacterController.dispose();
     _inviteSub?.cancel();
     _matchUpdateSub?.cancel();
     _connectionSub?.cancel();
@@ -128,7 +131,7 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
   // ---------------------------------------------------------------------------
   Future<void> _handleCheckIn() async {
     final username = _myUsernameController.text.trim();
-    final character = _myCharacterController.text.trim();
+    final character = selectedCharacter?.trim() ?? '';
 
     if (username.isEmpty || character.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -165,7 +168,7 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
 
     final success = await _apiService.checkOut(
       _myUsernameController.text.trim(),
-      _myCharacterController.text.trim(),
+      selectedCharacter?.trim() ?? '',
       1200,
     );
 
@@ -179,6 +182,7 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
         _wsConnected = false;
         _results.clear();
         _searchController.clear();
+        selectedCharacter = null;
       });
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -528,13 +532,25 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    TextField(
-                      controller: _myCharacterController,
-                      decoration: const InputDecoration(
-                        labelText: 'Character',
-                        border: OutlineInputBorder(),
-                        hintText: 'e.g. Marth',
-                      ),
+                    // TextField(
+                    //   controller: _myCharacterController,
+                    //   decoration: const InputDecoration(
+                    //     labelText: 'Character',
+                    //     border: OutlineInputBorder(),
+                    //     hintText: 'e.g. Marth',
+                    //   ),
+                    // ),
+                    DropdownButton<String>(
+                      value: selectedCharacter,
+                      hint: const Text('Select Character'),
+                      isExpanded: true,
+                      menuMaxHeight: MediaQuery.of(context).size.height * 0.4,
+                      onChanged: (String? newValue) {
+                        setState(() {
+                          selectedCharacter = newValue;
+                        });
+                      },
+                      items: _dropdownCharacterItems,
                     ),
                     const SizedBox(height: 12),
                     ElevatedButton(
