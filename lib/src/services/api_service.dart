@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/player.dart';
+import 'auth_service.dart';
 
 class ApiService {
   // --- TOGGLE THIS TO SWITCH BETWEEN REAL API AND MOCK DATA ---
@@ -14,19 +15,30 @@ class ApiService {
   static const String _baseUrl =
       'https://smashrank-api-production.up.railway.app/api';
 
+  final AuthService _authService = AuthService();
+
+  // ---------------------------------------------------------------------------
+  // Auth headers — attaches Bearer token to all requests
+  // ---------------------------------------------------------------------------
+  Map<String, String> get _authHeaders => {
+        'Content-Type': 'application/json',
+        if (_authService.accessToken != null)
+          'Authorization': 'Bearer ${_authService.accessToken}',
+      };
+
   /// Search for players in the active pool
   Future<List<Player>> searchActivePlayers(String query) async {
     // 1. Mock Data Path
-    if (useMockData) {
-      await Future.delayed(const Duration(milliseconds: 500));
-      return _getMockResults(query);
-    }
+    // if (useMockData) {
+    //   await Future.delayed(const Duration(milliseconds: 500));
+    //   return _getMockResults(query);
+    // }
 
     // 2. Real API Path
     try {
-      // Matches Spring: @GetMapping("/search") with @RequestParam String query
       final response = await http.get(
         Uri.parse('$_baseUrl/pool/search?query=$query'),
+        headers: _authHeaders,
       );
 
       if (response.statusCode == 200) {
@@ -43,7 +55,6 @@ class ApiService {
   }
 
   /// Check In to the pool
-  /// UPDATED: Added [elo] to match Spring @RequestParam int elo
   Future<bool> checkIn(String username, String character, int elo) async {
     if (useMockData) {
       await Future.delayed(const Duration(milliseconds: 500));
@@ -52,10 +63,10 @@ class ApiService {
     }
 
     try {
-      // Matches Spring: @PostMapping("/check-in")
       final response = await http.post(
         Uri.parse(
             '$_baseUrl/pool/check-in?username=$username&character=$character&elo=$elo'),
+        headers: _authHeaders,
       );
 
       return response.statusCode == 200;
@@ -66,7 +77,6 @@ class ApiService {
   }
 
   /// Check Out of the pool
-  /// UPDATED: Added [elo] to match Spring @RequestParam int elo
   Future<bool> checkOut(String username, String character, int elo) async {
     if (useMockData) {
       await Future.delayed(const Duration(milliseconds: 300));
@@ -75,10 +85,10 @@ class ApiService {
     }
 
     try {
-      // Matches Spring: @PostMapping("/check-out")
       final response = await http.post(
         Uri.parse(
             '$_baseUrl/pool/check-out?username=$username&character=$character&elo=$elo'),
+        headers: _authHeaders,
       );
 
       return response.statusCode == 200;
@@ -90,32 +100,16 @@ class ApiService {
 
   // --- Mock Data Logic ---
 
-  List<Player> _getMockResults(String query) {
-    if (query.isEmpty) return [];
+  // List<Player> _getMockResults(String query) {
+  //   final mockPlayers = [
+  //     Player(username: 'mew2king', lastTag: 'Fox', elo: 2000),
+  //     Player(username: 'mang0', lastTag: 'Falco', elo: 2100),
+  //     Player(username: 'zain', lastTag: 'Marth', elo: 2200),
+  //   ];
 
-    final lowercaseQuery = query.toLowerCase();
-
-    return _mockPlayers.where((player) {
-      return player.username.toLowerCase().contains(lowercaseQuery) ||
-          player.character.toLowerCase().contains(lowercaseQuery);
-    }).toList();
-  }
-
-  final List<Player> _mockPlayers = [
-    Player(id: '1', username: 'MKLeo', character: 'Joker', rating: 2450),
-    Player(id: '2', username: 'Sparg0', character: 'Cloud', rating: 2410),
-    Player(id: '3', username: 'Tweek', character: 'Diddy Kong', rating: 2380),
-    Player(id: '4', username: 'Light', character: 'Fox', rating: 2350),
-    Player(id: '5', username: 'Glutonny', character: 'Wario', rating: 2320),
-    Player(id: '6', username: 'Dabuz', character: 'Rosalina', rating: 2290),
-    Player(id: '7', username: 'Kurama', character: 'Mario', rating: 2250),
-    Player(id: '8', username: 'Tea', character: 'Pac-Man', rating: 2280),
-    Player(
-        id: '9',
-        username: 'Maister',
-        character: 'Mr. Game & Watch',
-        rating: 2200),
-    Player(id: '10', username: 'Riddles', character: 'Kazuya', rating: 2310),
-    Player(id: '11', username: 'Smasher123', character: 'Samus', rating: 1500),
-  ];
+  //   if (query.isEmpty) return mockPlayers;
+  //   return mockPlayers
+  //       .where((p) => p.username.toLowerCase().contains(query.toLowerCase()))
+  //       .toList();
+  // }
 }

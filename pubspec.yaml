@@ -17,6 +17,7 @@ dependencies:
   google_fonts: ^8.0.0
   http: ^1.2.0
   stomp_dart_client: ^2.0.0
+  flutter_secure_storage: ^9.2.4  # Phase 4: Secure token storage
 
 dev_dependencies:
   flutter_test:
