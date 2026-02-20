@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/player.dart';
 import '../services/api_service.dart';
+import '../services/auth_service.dart';
 import '../services/match_service.dart';
 import '../util/characters_util.dart';
 import 'match_screen.dart';
@@ -17,6 +18,7 @@ class OpponentSearchScreen extends StatefulWidget {
 
 class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
   final ApiService _apiService = ApiService();
+  final AuthService _authService = AuthService();
   final MatchService _matchService = MatchService();
 
   // --- Search State ---
@@ -27,7 +29,6 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
 
   // --- Check-In State ---
   bool _isCheckedIn = false;
-  final TextEditingController _myUsernameController = TextEditingController();
   String? selectedCharacter;
   bool _isCheckingInOrOut = false;
 
@@ -37,7 +38,7 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
   String? _pendingInviteId;
   String? _pendingInviteTarget;
 
-  // --- Dialog tracking (both use showGeneralDialog + rootNavigator pop) ---
+  // --- Dialog tracking ---
   bool _isPendingOverlayShowing = false;
   bool _isInviteDialogShowing = false;
 
@@ -48,6 +49,9 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
   StreamSubscription<String>? _errorSub;
 
   late final List<DropdownMenuItem<String>> _dropdownCharacterItems;
+
+  /// The logged-in user's username, from AuthService.
+  String get _myUsername => _authService.username ?? '';
 
   @override
   void initState() {
@@ -118,7 +122,6 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
   void dispose() {
     _debounce?.cancel();
     _searchController.dispose();
-    _myUsernameController.dispose();
     _inviteSub?.cancel();
     _matchUpdateSub?.cancel();
     _connectionSub?.cancel();
@@ -127,15 +130,15 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // Check In
+  // Check In — no more username text field, uses AuthService.username
   // ---------------------------------------------------------------------------
   Future<void> _handleCheckIn() async {
-    final username = _myUsernameController.text.trim();
+    final username = _myUsername;
     final character = selectedCharacter?.trim() ?? '';
 
-    if (username.isEmpty || character.isEmpty) {
+    if (character.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter username and character')),
+        const SnackBar(content: Text('Please select a character')),
       );
       return;
     }
@@ -151,7 +154,8 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
         _isCheckedIn = true;
         _isCheckingInOrOut = false;
       });
-      _matchService.connect(username);
+      // Phase 4: connect() reads username and token from AuthService
+      _matchService.connect();
     } else {
       setState(() => _isCheckingInOrOut = false);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -167,55 +171,48 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
     setState(() => _isCheckingInOrOut = true);
 
     final success = await _apiService.checkOut(
-      _myUsernameController.text.trim(),
+      _myUsername,
       selectedCharacter?.trim() ?? '',
       1200,
     );
 
     if (!mounted) return;
-    setState(() => _isCheckingInOrOut = false);
 
-    if (success) {
-      _matchService.disconnect();
-      setState(() {
-        _isCheckedIn = false;
-        _wsConnected = false;
-        _results.clear();
-        _searchController.clear();
-        selectedCharacter = null;
-      });
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to check out')),
-      );
-    }
+    _matchService.disconnect();
+    setState(() {
+      _isCheckedIn = false;
+      _isCheckingInOrOut = false;
+      _results = [];
+      _searchController.clear();
+    });
   }
 
   // ---------------------------------------------------------------------------
   // Search
   // ---------------------------------------------------------------------------
   void _onSearchChanged(String query) {
-    if (_debounce?.isActive ?? false) _debounce!.cancel();
-
+    _debounce?.cancel();
+    if (query.trim().isEmpty) {
+      setState(() => _results = []);
+      return;
+    }
     _debounce = Timer(const Duration(milliseconds: 300), () {
-      if (query.trim().isEmpty) {
-        setState(() => _results.clear());
-        return;
-      }
       _performSearch(query.trim());
     });
   }
 
   Future<void> _performSearch(String query) async {
     setState(() => _isLoading = true);
-
     final results = await _apiService.searchActivePlayers(query);
-
     if (!mounted) return;
+
+    // Exclude the current user from the results (case-insensitive).
+    final myLower = _myUsername.toLowerCase();
+    final filtered =
+        results.where((p) => p.username.toLowerCase() != myLower).toList();
+
     setState(() {
-      _results = results
-          .where((player) => player.username != _matchService.myUsername)
-          .toList();
+      _results = filtered;
       _isLoading = false;
     });
   }
@@ -224,116 +221,57 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
   // Challenge
   // ---------------------------------------------------------------------------
   Future<void> _sendChallenge(Player opponent) async {
-    if (!_wsConnected) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('WebSocket not connected yet')),
-      );
-      return;
-    }
-
-    if (opponent.username == _matchService.myUsername) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("You can't challenge yourself!")),
-      );
-      return;
-    }
-
     setState(() => _isChallenging = true);
 
     final inviteId = await _matchService.sendChallenge(opponent.username);
 
     if (!mounted) return;
-    setState(() => _isChallenging = false);
 
     if (inviteId != null) {
       _pendingInviteId = inviteId;
       _pendingInviteTarget = opponent.username;
-      _showPendingOverlay();
+      _showPendingOverlay(opponent.username, inviteId);
     }
+
+    setState(() => _isChallenging = false);
   }
 
   // ---------------------------------------------------------------------------
-  // Pending Overlay — challenger's full-screen blur (covers nav bar)
+  // Pending Overlay (waiting for opponent response)
   // ---------------------------------------------------------------------------
-  void _showPendingOverlay() {
-    if (_isPendingOverlayShowing) return;
+  void _showPendingOverlay(String opponentUsername, String inviteId) {
     _isPendingOverlayShowing = true;
-    final target = _pendingInviteTarget!;
-
     showGeneralDialog(
       context: context,
       barrierDismissible: false,
-      barrierColor: Colors.transparent,
-      pageBuilder: (dialogContext, _, __) {
-        return BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
-          child: Container(
-            color: Colors.black.withOpacity(0.4),
+      useRootNavigator: true,
+      pageBuilder: (context, anim1, anim2) {
+        return PopScope(
+          canPop: false,
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
             child: Center(
               child: Card(
-                elevation: 12,
-                margin: const EdgeInsets.symmetric(horizontal: 40),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
+                margin: const EdgeInsets.symmetric(horizontal: 32),
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+                  padding: const EdgeInsets.all(24),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.sports_esports,
-                          size: 56, color: Color(0xFFBD0910)),
-                      const SizedBox(height: 20),
-                      const Text(
-                        'Challenge Sent!',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Waiting for $target\nto accept...',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.grey[400],
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      const SizedBox(
-                        width: 36,
-                        height: 36,
-                        child: CircularProgressIndicator(strokeWidth: 3),
-                      ),
-                      const SizedBox(height: 28),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton(
-                          onPressed: () {
-                            final inviteId = _pendingInviteId;
-                            final opponent = _pendingInviteTarget;
-                            _pendingInviteId = null;
-                            _pendingInviteTarget = null;
-                            Navigator.of(dialogContext).pop();
-                            if (inviteId != null && opponent != null) {
-                              _matchService.cancelChallenge(inviteId, opponent);
-                            }
-                          },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.red,
-                            side: const BorderSide(color: Colors.red),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                          child: const Text(
-                            'Cancel Challenge',
-                            style: TextStyle(fontSize: 16),
-                          ),
-                        ),
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 16),
+                      Text('Waiting for $opponentUsername to respond...'),
+                      const SizedBox(height: 16),
+                      TextButton(
+                        onPressed: () {
+                          if (!_isPendingOverlayShowing) return;
+                          _isPendingOverlayShowing = false;
+                          Navigator.of(context, rootNavigator: true).pop();
+                          _matchService.cancelChallenge(
+                              inviteId, opponentUsername);
+                        },
+                        child: const Text('Cancel',
+                            style: TextStyle(color: Colors.red)),
                       ),
                     ],
                   ),
@@ -349,8 +287,6 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
   }
 
   void _dismissPendingOverlay() {
-    _pendingInviteId = null;
-    _pendingInviteTarget = null;
     if (_isPendingOverlayShowing && mounted) {
       _isPendingOverlayShowing = false;
       Navigator.of(context, rootNavigator: true).pop();
@@ -358,101 +294,81 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // Invite Dialog — opponent receives a challenge
-  //
-  // Uses showGeneralDialog (same mechanism as the pending overlay) so that
-  // dismissal via Navigator.of(context, rootNavigator: true).pop() is reliable.
+  // Invite Dialog (incoming challenge)
   // ---------------------------------------------------------------------------
   void _showInviteDialog(InvitePayload invite) {
-    if (_isInviteDialogShowing) return;
     _isInviteDialogShowing = true;
-
     showGeneralDialog(
       context: context,
       barrierDismissible: false,
-      barrierColor: Colors.black54,
-      transitionDuration: const Duration(milliseconds: 200),
-      pageBuilder: (dialogContext, _, __) {
-        return Center(
-          child: Material(
-            color: Colors.transparent,
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 40),
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.3),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.local_fire_department,
-                      size: 48, color: Colors.orange),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Challenge Received!',
-                    style: TextStyle(
-                      fontSize: 20,
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    '${invite.from} wants to fight!',
-                    style: const TextStyle(fontSize: 16, color: Colors.white),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 24),
-                  Row(
+      useRootNavigator: true,
+      pageBuilder: (dialogContext, anim1, anim2) {
+        return PopScope(
+          canPop: false,
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+            child: Center(
+              child: Card(
+                margin: const EdgeInsets.symmetric(horizontal: 32),
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () {
-                            if (!_isInviteDialogShowing) return;
-                            _isInviteDialogShowing = false;
-                            Navigator.of(dialogContext).pop();
-                            _matchService.declineChallenge(
-                                invite.inviteId, invite.from);
-                          },
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.red,
-                            side: const BorderSide(color: Colors.red),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                          ),
-                          child: const Text('Decline',
-                              style: TextStyle(fontSize: 16)),
-                        ),
+                      const Icon(Icons.sports_esports,
+                          size: 48, color: Color(0xFFBD0910)),
+                      const SizedBox(height: 12),
+                      Text(
+                        '${invite.from} wants to battle!',
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () {
-                            if (!_isInviteDialogShowing) return;
-                            _isInviteDialogShowing = false;
-                            Navigator.of(dialogContext).pop();
-                            _matchService.acceptChallenge(
-                                invite.inviteId, invite.from);
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () {
+                                if (!_isInviteDialogShowing) return;
+                                _isInviteDialogShowing = false;
+                                Navigator.of(dialogContext).pop();
+                                _matchService.declineChallenge(
+                                    invite.inviteId, invite.from);
+                              },
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.red,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                              ),
+                              child: const Text('Decline',
+                                  style: TextStyle(fontSize: 16)),
+                            ),
                           ),
-                          child: const Text('Accept',
-                              style: TextStyle(fontSize: 16)),
-                        ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () {
+                                if (!_isInviteDialogShowing) return;
+                                _isInviteDialogShowing = false;
+                                Navigator.of(dialogContext).pop();
+                                _matchService.acceptChallenge(
+                                    invite.inviteId, invite.from);
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                              ),
+                              child: const Text('Accept',
+                                  style: TextStyle(fontSize: 16)),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -501,7 +417,7 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
                   const SizedBox(width: 8),
                   Text(
                     _wsConnected
-                        ? 'Connected as ${_matchService.myUsername}'
+                        ? 'Connected as $_myUsername'
                         : 'Connecting...',
                     style: TextStyle(
                       color: _wsConnected ? Colors.green : Colors.orange,
@@ -520,29 +436,13 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
-                      'Check In to Play',
-                      style:
-                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    Text(
+                      'Check In as $_myUsername',
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 12),
-                    TextField(
-                      controller: _myUsernameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Username',
-                        border: OutlineInputBorder(),
-                        hintText: 'e.g. mew2king',
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    // TextField(
-                    //   controller: _myCharacterController,
-                    //   decoration: const InputDecoration(
-                    //     labelText: 'Character',
-                    //     border: OutlineInputBorder(),
-                    //     hintText: 'e.g. Marth',
-                    //   ),
-                    // ),
+                    // Phase 4: No username text field — identity from auth
                     DropdownButton<String>(
                       value: selectedCharacter,
                       hint: const Text('Select Character'),
@@ -614,50 +514,28 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
                     ? Center(
                         child: Text(
                           _searchController.text.isEmpty
-                              ? 'Search for your opponent above'
+                              ? 'Search for an opponent by name'
                               : 'No players found',
-                          style: TextStyle(color: Colors.grey[500]),
+                          style: TextStyle(color: Colors.grey.shade500),
                         ),
                       )
                     : ListView.builder(
                         itemCount: _results.length,
                         itemBuilder: (context, index) {
                           final player = _results[index];
-
-                          return Card(
-                            child: ListTile(
-                              leading: CircleAvatar(
+                          return ListTile(
+                            leading: const Icon(Icons.person),
+                            title: Text(player.username),
+                            subtitle: Text(player.character),
+                            trailing: ElevatedButton(
+                              onPressed: _isChallenging
+                                  ? null
+                                  : () => _sendChallenge(player),
+                              style: ElevatedButton.styleFrom(
                                 backgroundColor: const Color(0xFFBD0910),
-                                child: Text(
-                                  player.username[0].toUpperCase(),
-                                  style: const TextStyle(color: Colors.white),
-                                ),
+                                foregroundColor: Colors.white,
                               ),
-                              title: Text(
-                                player.username,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold),
-                              ),
-                              subtitle: Text(player.character),
-                              trailing: ElevatedButton(
-                                onPressed: _isChallenging
-                                    ? null
-                                    : () => _sendChallenge(player),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFFBD0910),
-                                  foregroundColor: Colors.white,
-                                ),
-                                child: _isChallenging
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          color: Colors.white,
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Text('Challenge'),
-                              ),
+                              child: const Text('Challenge'),
                             ),
                           );
                         },

@@ -99,7 +99,7 @@ class CharactersUtil {
         child: Row(
           children: [
             Image.asset(char.$2, width: 32, height: 32),
-            SizedBox(width: 12),
+            const SizedBox(width: 12),
             Text(char.$1),
           ],
         ),

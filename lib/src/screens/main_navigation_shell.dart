@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+
+import '../services/auth_service.dart';
+import '../services/match_service.dart';
 import 'opponent_search_screen.dart';
 
 class MainNavigationShell extends StatefulWidget {
@@ -10,6 +13,8 @@ class MainNavigationShell extends StatefulWidget {
 }
 
 class _MainNavigationShellState extends State<MainNavigationShell> {
+  final AuthService _authService = AuthService();
+  final MatchService _matchService = MatchService();
   int _selectedIndex = 0;
 
   // The three main screens of SmashRank
@@ -25,11 +30,15 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     });
   }
 
+  Future<void> _handleLogout() async {
+    _matchService.disconnect();
+    await _authService.logout();
+    // Auth state change triggers navigation back to LoginScreen via app.dart
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // IndexedStack is key: it keeps screens "alive" in the background
-      // so your search results don't disappear when you switch tabs.
       appBar: AppBar(
         title: Text(
           'Quickplay',
@@ -38,7 +47,26 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
             fontSize: 24,
           ),
         ),
-        backgroundColor: Colors.grey, // Smash Bros theme color
+        backgroundColor: Colors.grey,
+        actions: [
+          // Show username + logout button
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Row(
+              children: [
+                Text(
+                  _authService.username ?? '',
+                  style: const TextStyle(fontSize: 14, color: Colors.white70),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.logout, size: 20),
+                  tooltip: 'Sign Out',
+                  onPressed: _handleLogout,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
       body: IndexedStack(
         index: _selectedIndex,

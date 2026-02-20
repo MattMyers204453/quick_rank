@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:stomp_dart_client/stomp_dart_client.dart';
 
+import 'auth_service.dart';
+
 // =============================================================================
 // Data classes
 // =============================================================================
@@ -84,6 +86,11 @@ class MatchService {
   // static const String _httpBase = 'http://localhost:8080/api';
 
   // ---------------------------------------------------------------------------
+  // Dependencies
+  // ---------------------------------------------------------------------------
+  final AuthService _authService = AuthService();
+
+  // ---------------------------------------------------------------------------
   // State
   // ---------------------------------------------------------------------------
   StompClient? _stompClient;
@@ -113,17 +120,34 @@ class MatchService {
   Stream<String> get onError => _errorController.stream;
 
   // ---------------------------------------------------------------------------
+  // HTTP headers helper — attaches Bearer token to all requests
+  // ---------------------------------------------------------------------------
+  Map<String, String> get _authHeaders => {
+        'Content-Type': 'application/json',
+        if (_authService.accessToken != null)
+          'Authorization': 'Bearer ${_authService.accessToken}',
+      };
+
+  // ---------------------------------------------------------------------------
   // 1. Connect — call after check-in
   // ---------------------------------------------------------------------------
-  void connect(String username) {
+  void connect() {
+    final username = _authService.username;
+    final token = _authService.accessToken;
+
+    if (username == null || token == null) {
+      _errorController.add('Not logged in. Please sign in first.');
+      return;
+    }
+
     if (_isConnected && _myUsername == username) return;
 
     _myUsername = username;
 
-    // Ensure player record exists via dev-login
-    _devLogin(username);
-
-    final url = '$_wsBase?username=$username';
+    // Phase 4: Connect using JWT token instead of raw username.
+    // The server's UserHandshakeHandler validates the token and extracts
+    // the username as the Principal (same STOMP routing as before).
+    final url = '$_wsBase?token=$token';
 
     _stompClient = StompClient(
       config: StompConfig(
@@ -145,7 +169,7 @@ class MatchService {
       ),
     );
 
-    print('[WS] Connecting as $username...');
+    print('[WS] Connecting as $username (JWT)...');
     _stompClient!.activate();
   }
 
@@ -190,16 +214,6 @@ class MatchService {
     );
   }
 
-  Future<void> _devLogin(String username) async {
-    try {
-      await http
-          .post(Uri.parse('$_httpBase/dev/auth/login?username=$username'));
-      print('[HTTP] Dev login OK for $username');
-    } catch (e) {
-      print('[HTTP] Dev login error: $e');
-    }
-  }
-
   // ---------------------------------------------------------------------------
   // 2. Challenge Flow — invite, accept, decline, cancel
   // ---------------------------------------------------------------------------
@@ -208,7 +222,7 @@ class MatchService {
     try {
       final res = await http.post(
         Uri.parse('$_httpBase/matches/invite'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _authHeaders,
         body: jsonEncode({
           'challengerUsername': _myUsername,
           'targetUsername': targetUsername,
@@ -217,7 +231,7 @@ class MatchService {
 
       if (res.statusCode == 200) {
         print('[HTTP] Invite sent. ID: ${res.body}');
-        return res.body; // inviteId
+        return res.body; // The inviteId
       } else {
         print('[HTTP] Invite failed: ${res.body}');
         _errorController.add(res.body);
@@ -233,16 +247,16 @@ class MatchService {
   Future<void> acceptChallenge(
       String inviteId, String challengerUsername) async {
     try {
-      await http.post(
+      final res = await http.post(
         Uri.parse('$_httpBase/matches/accept'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _authHeaders,
         body: jsonEncode({
           'inviteId': inviteId,
           'challengerUsername': challengerUsername,
           'opponentUsername': _myUsername,
         }),
       );
-      print('[HTTP] Invite accepted');
+      print('[HTTP] Accept result: ${res.statusCode} ${res.body}');
     } catch (e) {
       print('[HTTP] Accept error: $e');
       _errorController.add('Network error: $e');
@@ -252,37 +266,35 @@ class MatchService {
   Future<void> declineChallenge(
       String inviteId, String challengerUsername) async {
     try {
-      await http.post(
+      final res = await http.post(
         Uri.parse('$_httpBase/matches/decline'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _authHeaders,
         body: jsonEncode({
           'inviteId': inviteId,
           'challengerUsername': challengerUsername,
           'opponentUsername': _myUsername,
         }),
       );
-      print('[HTTP] Invite declined');
+      print('[HTTP] Decline result: ${res.statusCode} ${res.body}');
     } catch (e) {
       print('[HTTP] Decline error: $e');
-      _errorController.add('Network error: $e');
     }
   }
 
   Future<void> cancelChallenge(String inviteId, String targetUsername) async {
     try {
-      await http.post(
+      final res = await http.post(
         Uri.parse('$_httpBase/matches/cancel'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _authHeaders,
         body: jsonEncode({
           'inviteId': inviteId,
           'challengerUsername': _myUsername,
           'opponentUsername': targetUsername,
         }),
       );
-      print('[HTTP] Invite cancelled');
+      print('[HTTP] Cancel result: ${res.statusCode} ${res.body}');
     } catch (e) {
       print('[HTTP] Cancel error: $e');
-      _errorController.add('Network error: $e');
     }
   }
 
@@ -294,7 +306,7 @@ class MatchService {
     try {
       final res = await http.post(
         Uri.parse('$_httpBase/matches/report'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _authHeaders,
         body: jsonEncode({
           'matchId': matchId,
           'reporterUsername': _myUsername,
@@ -321,7 +333,7 @@ class MatchService {
     try {
       final res = await http.post(
         Uri.parse('$_httpBase/matches/confirm'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _authHeaders,
         body: jsonEncode({
           'matchId': matchId,
           'confirmerUsername': _myUsername,
@@ -348,14 +360,11 @@ class MatchService {
   // 4. Rematch Flow
   // ---------------------------------------------------------------------------
 
-  /// Send rematch response (accept or decline).
-  /// Called by MatchScreen when player taps "Rematch" or "Leave",
-  /// or automatically on timeout (accept: false).
   Future<bool> requestRematch(String matchId, bool accept) async {
     try {
       final res = await http.post(
         Uri.parse('$_httpBase/matches/rematch'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _authHeaders,
         body: jsonEncode({
           'matchId': matchId,
           'username': _myUsername,
