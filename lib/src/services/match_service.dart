@@ -26,16 +26,28 @@ class InvitePayload {
   }
 }
 
+// =============================================================================
+// match_service.dart — REPLACE MatchUpdateEvent class
+// =============================================================================
+
 class MatchUpdateEvent {
   final String? matchId;
-  final String status; // STARTED, AWAITING_CONFIRMATION, REMATCH_OFFERED,
-  // REMATCH_WAITING, REMATCH_DECLINED, DECLINED
+  final String status;
   final String player1;
   final String player2;
-  final String? reporterUsername; // AWAITING_CONFIRMATION only
-  final String?
-      claimedWinner; // AWAITING_CONFIRMATION & REMATCH_OFFERED (winner)
-  final String? result; // REMATCH_OFFERED only: "COMPLETED" or "DISPUTED"
+  final String? reporterUsername;
+  final String? claimedWinner;
+  final String? result;
+
+  // Elo fields (REMATCH_OFFERED with result=COMPLETED only)
+  final int? player1EloDelta;
+  final int? player2EloDelta;
+  final int? player1NewElo;
+  final int? player2NewElo;
+
+  // Character fields (present on most events)
+  final String? player1Character;
+  final String? player2Character;
 
   MatchUpdateEvent({
     required this.matchId,
@@ -45,18 +57,51 @@ class MatchUpdateEvent {
     this.reporterUsername,
     this.claimedWinner,
     this.result,
+    this.player1EloDelta,
+    this.player2EloDelta,
+    this.player1NewElo,
+    this.player2NewElo,
+    this.player1Character,
+    this.player2Character,
   });
 
   factory MatchUpdateEvent.fromJson(Map<String, dynamic> json) {
     return MatchUpdateEvent(
       matchId: json['matchId'] as String?,
-      status: json['status'] as String,
-      player1: json['player1'] as String,
-      player2: json['player2'] as String,
+      status: json['status'] as String? ?? '',
+      player1: json['player1'] as String? ?? '',
+      player2: json['player2'] as String? ?? '',
       reporterUsername: json['reporterUsername'] as String?,
       claimedWinner: json['claimedWinner'] as String?,
       result: json['result'] as String?,
+      player1EloDelta: (json['player1EloDelta'] as num?)?.toInt(),
+      player2EloDelta: (json['player2EloDelta'] as num?)?.toInt(),
+      player1NewElo: (json['player1NewElo'] as num?)?.toInt(),
+      player2NewElo: (json['player2NewElo'] as num?)?.toInt(),
+      player1Character: json['player1Character'] as String?,
+      player2Character: json['player2Character'] as String?,
     );
+  }
+
+  /// Get Elo delta for a player by username.
+  int? getEloDeltaForPlayer(String username) {
+    if (username == player1) return player1EloDelta;
+    if (username == player2) return player2EloDelta;
+    return null;
+  }
+
+  /// Get new Elo for a player by username.
+  int? getNewEloForPlayer(String username) {
+    if (username == player1) return player1NewElo;
+    if (username == player2) return player2NewElo;
+    return null;
+  }
+
+  /// Get character for a player by username.
+  String? getCharacterForPlayer(String username) {
+    if (username == player1) return player1Character;
+    if (username == player2) return player2Character;
+    return null;
   }
 }
 

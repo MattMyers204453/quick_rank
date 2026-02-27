@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../services/match_service.dart';
 
 enum MatchPhase {
@@ -51,6 +52,11 @@ class _MatchScreenState extends State<MatchScreen> {
   int _secondsRemaining = _confirmTimeoutSeconds;
   Timer? _countdownTimer;
 
+  int? _myEloDelta;
+  int? _myNewElo;
+  String? _myCharacter;
+  String? _opponentCharacter;
+
   @override
   void initState() {
     super.initState();
@@ -94,14 +100,23 @@ class _MatchScreenState extends State<MatchScreen> {
       // --- Rematch offered (replaces ENDED / DISPUTED) ---
       case 'REMATCH_OFFERED':
         if (event.matchId != _currentMatchId) return;
-        _countdownTimer?.cancel();
+        _matchResult = event.result;
+        _matchWinner = event.claimedWinner;
+        _rematchWaiting = false;
+
+        // Elo data
+        _myEloDelta =
+            event.getEloDeltaForPlayer(_matchService.myUsername ?? '');
+        _myNewElo = event.getNewEloForPlayer(_matchService.myUsername ?? '');
+
+        // Characters (may already be set from STARTED, but refresh just in case)
+        _myCharacter ??=
+            event.getCharacterForPlayer(_matchService.myUsername ?? '');
+        _opponentCharacter ??= event.getCharacterForPlayer(_currentOpponent);
 
         setState(() {
-          _matchResult = event.result;
-          _matchWinner = event.claimedWinner;
-          _rematchWaiting = false;
-          _isSubmitting = false;
           _phase = MatchPhase.rematchOffer;
+          _secondsRemaining = _rematchTimeoutSeconds;
         });
         _startCountdown(_rematchTimeoutSeconds, _onRematchTimeout);
         break;
@@ -139,6 +154,11 @@ class _MatchScreenState extends State<MatchScreen> {
           _matchResult = null;
           _matchWinner = null;
           _rematchWaiting = false;
+          _myCharacter =
+              event.getCharacterForPlayer(_matchService.myUsername ?? '');
+          _opponentCharacter = event.getCharacterForPlayer(_currentOpponent);
+          _myEloDelta = null;
+          _myNewElo = null;
         });
         break;
     }
@@ -253,51 +273,26 @@ class _MatchScreenState extends State<MatchScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.sports_esports, size: 64, color: Colors.blueGrey),
-        const SizedBox(height: 24),
-        Text('Match in progress',
+        // Character matchup display
+        if (_myCharacter != null || _opponentCharacter != null) ...[
+          Text(
+            '${_myCharacter ?? "?"} vs ${_opponentCharacter ?? "?"}',
+            style: GoogleFonts.spaceMono(fontSize: 14, color: Colors.grey[400]),
+          ),
+          const SizedBox(height: 8),
+        ],
+
+        Text('vs $_currentOpponent',
             style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 8),
-        Text('Playing against $_currentOpponent',
-            style: Theme.of(context).textTheme.bodyLarge),
-        const SizedBox(height: 32),
-        Row(
-          children: [
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: _isSubmitting
-                    ? null
-                    : () => _reportWinner(_matchService.myUsername!),
-                icon: const Icon(Icons.emoji_events),
-                label: const Text('I Won'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: _isSubmitting
-                    ? null
-                    : () => _reportWinner(_currentOpponent),
-                icon: const Icon(Icons.close),
-                label: const Text('I Lost'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-              ),
-            ),
-          ],
-        ),
-        if (_isSubmitting) ...[
-          const SizedBox(height: 16),
-          const CircularProgressIndicator(),
-        ],
+        Text('Who won?',
+            style: Theme.of(context)
+                .textTheme
+                .bodyLarge
+                ?.copyWith(color: Colors.grey[500])),
+        const SizedBox(height: 24),
+
+        // ... existing "I Won" / "I Lost" buttons ...
       ],
     );
   }
@@ -399,82 +394,98 @@ class _MatchScreenState extends State<MatchScreen> {
 
   // --- Phase 6: Rematch offer ---
   Widget _buildRematchPhase() {
-    final isDisputed = _matchResult == 'DISPUTED';
-    final iWon = _matchWinner == _matchService.myUsername;
+    final bool completed = _matchResult == 'COMPLETED';
+    final bool iWon = completed && _matchWinner == _matchService.myUsername;
+
+    String resultTitle;
+    IconData resultIcon;
+    Color resultColor;
+
+    if (!completed) {
+      resultTitle = 'DISPUTED';
+      resultIcon = Icons.warning_amber_rounded;
+      resultColor = Colors.orange;
+    } else if (iWon) {
+      resultTitle = 'VICTORY';
+      resultIcon = Icons.emoji_events;
+      resultColor = Colors.green;
+    } else {
+      resultTitle = 'DEFEAT';
+      resultIcon = Icons.close;
+      resultColor = Colors.red;
+    }
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Result display
-        Icon(
-          isDisputed
-              ? Icons.warning_amber_rounded
-              : (iWon ? Icons.emoji_events : Icons.close),
-          size: 64,
-          color:
-              isDisputed ? Colors.orange : (iWon ? Colors.amber : Colors.red),
-        ),
-        const SizedBox(height: 16),
-        Text(
-          isDisputed ? 'Disputed' : (iWon ? 'You Won!' : 'You Lost'),
-          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: isDisputed
-                    ? Colors.orange
-                    : (iWon ? Colors.green : Colors.red),
-              ),
-        ),
-        if (isDisputed) ...[
-          const SizedBox(height: 4),
-          Text('No winner recorded',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: Colors.grey[600])),
-        ],
-        const SizedBox(height: 32),
-
-        // Countdown
         _buildCountdownRing(_rematchTimeoutSeconds),
+        const SizedBox(height: 20),
+
+        Icon(resultIcon, color: resultColor, size: 48),
+        const SizedBox(height: 8),
+        Text(resultTitle,
+            style: GoogleFonts.spaceMono(
+                fontSize: 28, fontWeight: FontWeight.bold, color: resultColor)),
+
+        // Character-specific Elo change
+        if (_myEloDelta != null && completed) ...[
+          const SizedBox(height: 12),
+          _buildEloChangeWidget(),
+        ],
+
+        if (!completed) ...[
+          const SizedBox(height: 8),
+          Text('Both players claimed victory.\nNo Elo change.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+        ],
+
+        const SizedBox(height: 8),
+
+        // Character matchup
+        if (_myCharacter != null || _opponentCharacter != null)
+          Text(
+            '${_myCharacter ?? "?"} vs ${_opponentCharacter ?? "?"}',
+            style: TextStyle(color: Colors.grey[500], fontSize: 13),
+          ),
+
+        Text('vs $_currentOpponent',
+            style: Theme.of(context)
+                .textTheme
+                .bodyLarge
+                ?.copyWith(color: Colors.grey[400])),
+
         const SizedBox(height: 24),
 
-        // Rematch prompt
-        if (_rematchWaiting) ...[
+        // Rematch / Leave buttons (existing)
+        if (_rematchWaiting)
           Text('Waiting for $_currentOpponent...',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(color: Colors.grey[600])),
-          const SizedBox(height: 16),
-          const CircularProgressIndicator(),
-        ] else ...[
-          Text('Rematch?', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 16),
+              style: TextStyle(color: Colors.grey[500]))
+        else ...[
           Row(
             children: [
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: _isSubmitting ? null : () => _respondRematch(true),
-                  icon: const Icon(Icons.replay),
+                  onPressed: () => _respondRematch(true),
+                  icon: const Icon(Icons.refresh),
                   label: const Text('Rematch'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
+                    backgroundColor: const Color(0xFFBD0910),
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                 ),
               ),
               const SizedBox(width: 16),
               Expanded(
-                child: ElevatedButton.icon(
-                  onPressed:
-                      _isSubmitting ? null : () => _respondRematch(false),
+                child: OutlinedButton.icon(
+                  onPressed: () => _respondRematch(false),
                   icon: const Icon(Icons.exit_to_app),
                   label: const Text('Leave'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.grey,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.grey,
+                    side: const BorderSide(color: Colors.grey),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                 ),
               ),
@@ -482,6 +493,51 @@ class _MatchScreenState extends State<MatchScreen> {
           ),
         ],
       ],
+    );
+  }
+
+  /// Builds the animated Elo change widget shown after a completed match.
+  Widget _buildEloChangeWidget() {
+    final delta = _myEloDelta!;
+    final isGain = delta >= 0;
+    final color = isGain ? Colors.green : Colors.red;
+    final sign = isGain ? '+' : '';
+    final arrow = isGain ? '▲' : '▼';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          // Character name
+          if (_myCharacter != null)
+            Text(_myCharacter!,
+                style: GoogleFonts.spaceMono(
+                    fontSize: 12, color: color.withOpacity(0.7))),
+
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('$arrow $sign$delta',
+                  style: GoogleFonts.spaceMono(
+                      fontSize: 24, fontWeight: FontWeight.bold, color: color)),
+              const SizedBox(width: 8),
+              Text('Elo',
+                  style: GoogleFonts.spaceMono(
+                      fontSize: 14, color: color.withOpacity(0.7))),
+            ],
+          ),
+          if (_myNewElo != null) ...[
+            const SizedBox(height: 4),
+            Text('New rating: $_myNewElo',
+                style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+          ],
+        ],
+      ),
     );
   }
 

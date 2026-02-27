@@ -87,7 +87,7 @@ class ApiService {
     try {
       final response = await http.post(
         Uri.parse(
-            '$_baseUrl/pool/check-out?username=$username&character=$character&elo=$elo'),
+            '$_baseUrl/pool/check-out?username=$username&character=$character'),
         headers: _authHeaders,
       );
 
@@ -95,6 +95,105 @@ class ApiService {
     } catch (e) {
       print('Error checking out: $e');
       return false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Global Rankings
+  // ---------------------------------------------------------------------------
+
+  Future<List<GlobalRankedPlayer>> getGlobalRankings({int limit = 50}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/rankings?limit=$limit'),
+        headers: _authHeaders,
+      );
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> body = jsonDecode(response.body);
+        final List<dynamic> players = body['players'] ?? [];
+        return players.map((j) => GlobalRankedPlayer.fromJson(j)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error fetching global rankings: $e');
+      return [];
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Per-Character Rankings
+  // ---------------------------------------------------------------------------
+
+  Future<List<CharacterRankedPlayer>> getCharacterRankings(String character,
+      {int limit = 50}) async {
+    try {
+      final encoded = Uri.encodeComponent(character);
+      final response = await http.get(
+        Uri.parse('$_baseUrl/rankings/character/$encoded?limit=$limit'),
+        headers: _authHeaders,
+      );
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> body = jsonDecode(response.body);
+        final List<dynamic> players = body['players'] ?? [];
+        return players.map((j) => CharacterRankedPlayer.fromJson(j)).toList();
+      }
+      return [];
+    } catch (e) {
+      print('Error fetching character rankings: $e');
+      return [];
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Character List (for filter dropdown)
+  // ---------------------------------------------------------------------------
+
+  Future<List<String>> getPlayedCharacters() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/rankings/characters'),
+        headers: _authHeaders,
+      );
+      if (response.statusCode == 200) {
+        final List<dynamic> body = jsonDecode(response.body);
+        return body.cast<String>();
+      }
+      return [];
+    } catch (e) {
+      print('Error fetching characters: $e');
+      return [];
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Player Profile (with character breakdown)
+  // ---------------------------------------------------------------------------
+
+  Future<ProfileData?> getProfile(String username,
+      {int matchLimit = 20}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/profile/$username?matchLimit=$matchLimit'),
+        headers: _authHeaders,
+      );
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> body = jsonDecode(response.body);
+        return ProfileData(
+          profile: PlayerProfile.fromJson(body['player']),
+          characters: (body['characters'] as List<dynamic>?)
+                  ?.map((j) => CharacterStat.fromJson(j))
+                  .toList() ??
+              [],
+          matches: (body['recentMatches'] as List<dynamic>?)
+                  ?.map((j) => MatchHistoryEntry.fromJson(j))
+                  .toList() ??
+              [],
+        );
+      }
+      return null;
+    } catch (e) {
+      print('Error fetching profile: $e');
+      return null;
     }
   }
 
@@ -112,4 +211,20 @@ class ApiService {
   //       .where((p) => p.username.toLowerCase().contains(query.toLowerCase()))
   //       .toList();
   // }
+}
+
+// ---------------------------------------------------------------------------
+// Helper class for profile response
+// ---------------------------------------------------------------------------
+
+class ProfileData {
+  final PlayerProfile profile;
+  final List<CharacterStat> characters;
+  final List<MatchHistoryEntry> matches;
+
+  ProfileData({
+    required this.profile,
+    required this.characters,
+    required this.matches,
+  });
 }
