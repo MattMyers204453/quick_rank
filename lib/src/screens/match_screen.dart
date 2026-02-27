@@ -292,7 +292,39 @@ class _MatchScreenState extends State<MatchScreen> {
                 ?.copyWith(color: Colors.grey[500])),
         const SizedBox(height: 24),
 
-        // ... existing "I Won" / "I Lost" buttons ...
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _isSubmitting
+                    ? null
+                    : () => _reportWinner(_matchService.myUsername!),
+                icon: const Icon(Icons.emoji_events),
+                label: const Text('I Won'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _isSubmitting
+                    ? null
+                    : () => _reportWinner(_currentOpponent),
+                icon: const Icon(Icons.close),
+                label: const Text('I Lost'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
+            ),
+          ],
+        ),
       ],
     );
   }

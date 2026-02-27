@@ -54,18 +54,18 @@ class ApiService {
     }
   }
 
-  /// Check In to the pool
-  Future<bool> checkIn(String username, String character, int elo) async {
+  /// Check In to the pool (server looks up character-specific Elo from DB)
+  Future<bool> checkIn(String username, String character) async {
     if (useMockData) {
       await Future.delayed(const Duration(milliseconds: 500));
-      print('MOCK API: Checked in $username as $character with Elo $elo');
+      print('MOCK API: Checked in $username as $character');
       return true;
     }
 
     try {
       final response = await http.post(
         Uri.parse(
-            '$_baseUrl/pool/check-in?username=$username&character=$character&elo=$elo'),
+            '$_baseUrl/pool/check-in?username=$username&character=$character'),
         headers: _authHeaders,
       );
 
@@ -76,18 +76,17 @@ class ApiService {
     }
   }
 
-  /// Check Out of the pool
-  Future<bool> checkOut(String username, String character, int elo) async {
+  /// Check Out of the pool (server looks up stored entry by username)
+  Future<bool> checkOut(String username) async {
     if (useMockData) {
       await Future.delayed(const Duration(milliseconds: 300));
-      print('MOCK API: Checked out $username ($elo)');
+      print('MOCK API: Checked out $username');
       return true;
     }
 
     try {
       final response = await http.post(
-        Uri.parse(
-            '$_baseUrl/pool/check-out?username=$username&character=$character'),
+        Uri.parse('$_baseUrl/pool/check-out?username=$username'),
         headers: _authHeaders,
       );
 

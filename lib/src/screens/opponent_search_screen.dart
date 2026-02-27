@@ -145,7 +145,7 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
 
     setState(() => _isCheckingInOrOut = true);
 
-    final success = await _apiService.checkIn(username, character, 1200);
+    final success = await _apiService.checkIn(username, character);
 
     if (!mounted) return;
 
@@ -170,11 +170,7 @@ class _OpponentSearchScreenState extends State<OpponentSearchScreen> {
   Future<void> _handleCheckOut() async {
     setState(() => _isCheckingInOrOut = true);
 
-    final success = await _apiService.checkOut(
-      _myUsername,
-      selectedCharacter?.trim() ?? '',
-      1200,
-    );
+    final success = await _apiService.checkOut(_myUsername);
 
     if (!mounted) return;
 
