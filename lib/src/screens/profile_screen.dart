@@ -9,10 +9,10 @@ class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
   @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
+  ProfileScreenState createState() => ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class ProfileScreenState extends State<ProfileScreen> {
   final ApiService _apiService = ApiService();
   final AuthService _authService = AuthService();
 
@@ -27,6 +27,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.initState();
     _loadProfile();
   }
+
+  /// Called by MainNavigationShell when this tab is selected.
+  void reload() => _loadProfile();
 
   Future<void> _loadProfile() async {
     final username = _authService.username;

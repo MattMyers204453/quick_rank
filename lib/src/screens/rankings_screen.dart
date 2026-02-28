@@ -9,10 +9,10 @@ class RankingsScreen extends StatefulWidget {
   const RankingsScreen({super.key});
 
   @override
-  State<RankingsScreen> createState() => _RankingsScreenState();
+  RankingsScreenState createState() => RankingsScreenState();
 }
 
-class _RankingsScreenState extends State<RankingsScreen> {
+class RankingsScreenState extends State<RankingsScreen> {
   final ApiService _apiService = ApiService();
   final AuthService _authService = AuthService();
 
@@ -33,6 +33,12 @@ class _RankingsScreenState extends State<RankingsScreen> {
   @override
   void initState() {
     super.initState();
+    _loadCharacters();
+    _loadRankings();
+  }
+
+  /// Called by MainNavigationShell when this tab is selected.
+  void reload() {
     _loadCharacters();
     _loadRankings();
   }

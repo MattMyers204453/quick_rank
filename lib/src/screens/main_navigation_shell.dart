@@ -19,14 +19,21 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
   final MatchService _matchService = MatchService();
   int _selectedIndex = 0;
 
-  final List<Widget> _screens = [
+  final _rankingsKey = GlobalKey<RankingsScreenState>();
+  final _profileKey = GlobalKey<ProfileScreenState>();
+
+  late final List<Widget> _screens = [
     const OpponentSearchScreen(),
-    const RankingsScreen(),
-    const ProfileScreen(),
+    RankingsScreen(key: _rankingsKey),
+    ProfileScreen(key: _profileKey),
   ];
 
   void _onItemTapped(int index) {
     setState(() => _selectedIndex = index);
+
+    // Reload data when switching to Rankings or Profile tabs
+    if (index == 1) _rankingsKey.currentState?.reload();
+    if (index == 2) _profileKey.currentState?.reload();
   }
 
   Future<void> _handleLogout() async {
